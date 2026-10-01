@@ -136,12 +136,11 @@ async function fetchData(addonInstance) {
                     signal: controller.signal,
                     headers: { 'User-Agent': 'Stremio M3U/EPG Addon (directProvider/epg)' }
                 });
+                if (epgResp && epgResp.ok) {
+                    addonInstance.epgData = await addonInstance.parseEPGStream(epgResp.body);
+                }
             } finally {
                 clearTimeout(timeout);
-            }
-            if (epgResp && epgResp.ok) {
-                const epgContent = await epgResp.text();
-                addonInstance.epgData = await addonInstance.parseEPG(epgContent);
             }
         } catch {
             // ignore EPG errors

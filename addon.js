@@ -60,6 +60,10 @@ async function redisSetJSON(key, value, ttl) {
     } catch { /* ignore */ }
 }
 
+const EPG_PAST_MS = 3 * 3600000;
+const EPG_FUTURE_MS = 36 * 3600000;
+const EPG_DESC_MAX = 400;
+
 function stableStringify(obj) {
     return JSON.stringify(obj, Object.keys(obj).sort());
 }
@@ -306,6 +310,82 @@ class M3UEPGAddon {
             this.log.warn('EPG parse failed', e.message);
             return {};
         }
+    }
+
+    epgWantedChannels() {
+        const ids = new Set();
+        for (const c of this.channels) {
+            const a = c.attributes || {};
+            for (const v of [a['tvg-id'], a['tvg-name'], c.epg_channel_id]) if (v) ids.add(v);
+        }
+        return ids;
+    }
+
+    parseEPGStream(stream) {
+        const sax = require('sax');
+        const start = Date.now();
+        const wanted = this.epgWantedChannels();
+        const now = Date.now();
+        const windowStart = now - EPG_PAST_MS;
+        const windowEnd = now + EPG_FUTURE_MS;
+        const epgData = {};
+        let kept = 0, seen = 0;
+        let prog = null, field = null;
+
+        return new Promise((resolve) => {
+            const parser = sax.createStream(true, { trim: false });
+            parser.on('opentag', (node) => {
+                if (node.name === 'programme') {
+                    seen++;
+                    const ch = node.attributes.channel;
+                    if (!ch || (wanted.size && !wanted.has(ch))) return;
+                    const stopMs = this.parseEPGTime(node.attributes.stop).getTime();
+                    const startMs = this.parseEPGTime(node.attributes.start).getTime();
+                    if (stopMs < windowStart || startMs > windowEnd) return;
+                    prog = { ch, start: node.attributes.start, stop: node.attributes.stop, title: '', desc: '' };
+                } else if (prog && (node.name === 'title' || node.name === 'desc')) {
+                    field = prog[node.name] ? null : node.name;
+                }
+            });
+            const onText = (t) => {
+                if (prog && field && prog[field].length < EPG_DESC_MAX) prog[field] += t;
+            };
+            parser.on('text', onText);
+            parser.on('cdata', onText);
+            parser.on('closetag', (name) => {
+                if (name === 'title' || name === 'desc') field = null;
+                else if (name === 'programme' && prog) {
+                    (epgData[prog.ch] ||= []).push({
+                        start: prog.start,
+                        stop: prog.stop,
+                        title: prog.title.trim().slice(0, EPG_DESC_MAX) || 'Unknown',
+                        desc: prog.desc.trim().slice(0, EPG_DESC_MAX)
+                    });
+                    kept++;
+                    prog = null;
+                }
+            });
+            parser.on('error', () => {
+                parser._parser.error = null;
+                parser._parser.resume();
+            });
+            const done = () => {
+                this.log.debug('EPG stream parsed', {
+                    channels: Object.keys(epgData).length,
+                    programmesSeen: seen,
+                    programmesKept: kept,
+                    wantedChannels: wanted.size,
+                    ms: Date.now() - start
+                });
+                resolve(epgData);
+            };
+            parser.on('end', done);
+            stream.on('error', (e) => {
+                this.log.warn('EPG stream error', e.message);
+                done();
+            });
+            stream.pipe(parser);
+        });
     }
 
     parseEPGTime(s) {

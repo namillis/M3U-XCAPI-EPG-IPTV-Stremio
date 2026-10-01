@@ -46,6 +46,10 @@ const interfaceCache = new LRUCache({
 const CACHE_ENABLED =
   (process.env.CACHE_ENABLED || "true").toLowerCase() !== "false";
 
+const PREFETCH_EPG_MAX_BYTES = parseInt(
+  process.env.PREFETCH_EPG_MAX_BYTES || "2000000",
+  10,
+);
 const PREFETCH_MAX_BYTES = parseInt(
   process.env.PREFETCH_MAX_BYTES || "150000000",
   10,
@@ -136,26 +140,41 @@ app.post("/api/prefetch", async (req, res) => {
         .json({ error: `Fetch failed (${fetched.status})` });
     }
 
-    // Accumulate stream with a byte limit
-    const reader = fetched.body; // Node.js readable stream
+    const maxBytes =
+      purpose === "epg" ? PREFETCH_EPG_MAX_BYTES : PREFETCH_MAX_BYTES;
+    const reader = fetched.body;
     const chunks = [];
     let received = 0;
     let truncated = false;
 
     await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        if (err) reject(err);
+        else resolve();
+      };
       reader.on("data", (chunk) => {
-        received += chunk.length;
-        if (received <= PREFETCH_MAX_BYTES) {
+        if (settled) return;
+        const room = maxBytes - received;
+        if (chunk.length <= room) {
           chunks.push(chunk);
-        } else {
-          truncated = true;
-          // Stop reading further; destroy stream.
-          reader.destroy();
+          received += chunk.length;
+          return;
         }
+        if (room > 0) chunks.push(chunk.subarray(0, room));
+        received = maxBytes;
+        truncated = true;
+        finish();
+        reader.removeAllListeners("data");
+        controller.abort();
+        reader.on("error", () => {});
+        reader.destroy();
       });
-      reader.on("end", resolve);
-      reader.on("close", resolve);
-      reader.on("error", reject);
+      reader.on("end", () => finish());
+      reader.on("close", () => finish());
+      reader.on("error", (e) => finish(e));
     });
 
     let content = Buffer.concat(chunks).toString("utf8");
