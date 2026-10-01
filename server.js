@@ -8,36 +8,20 @@ const path = require("path");
 const crypto = require("crypto");
 const fetch = require("node-fetch");
 const createAddon = require("./addon");
+const { redisStatus } = createAddon;
 const {
   encryptConfig,
   encryptionEnabled,
   tryParseConfigToken,
 } = require("./cryptoConfig");
 const { version: APP_VERSION } = require("./package.json");
+const { sitePassword, sitePasswordEnabled } = require("./siteAuth");
+const { fetchAccountInfo } = require("./src/js/providers/xtreamProvider");
 const LRUCache = require("./lruCache");
 
 const DEBUG = (process.env.DEBUG_MODE || "").toLowerCase() === "true";
 function dlog(...args) {
   if (DEBUG) console.log("[DEBUG]", ...args);
-}
-
-let redisClient = null;
-if (process.env.REDIS_URL) {
-  try {
-    const { Redis } = require("ioredis");
-    redisClient = new Redis(process.env.REDIS_URL, {
-      lazyConnect: true,
-      maxRetriesPerRequest: 2,
-    });
-    redisClient.on("error", (e) => console.error("[REDIS] Error:", e.message));
-    redisClient
-      .connect()
-      .catch((err) => console.error("[REDIS] Connect failed:", err.message));
-    console.log("[REDIS] Enabled (interface cache)");
-  } catch (e) {
-    console.warn("[REDIS] ioredis not available, fallback to in-memory LRU");
-    redisClient = null;
-  }
 }
 
 const INTERFACE_TTL_MS = parseInt(
@@ -64,6 +48,7 @@ const PREFETCH_ENABLED =
 
 const app = express();
 const staticDir = path.join(__dirname, "src");
+app.use(sitePassword());
 app.use(express.static(staticDir));
 app.use(express.json({ limit: "512kb" }));
 
@@ -73,6 +58,39 @@ app.use((req, res, next) => {
 });
 
 // Encryption endpoint
+function isBlockedHost(host) {
+  return (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^\[?(::1?|f[cd][0-9a-f]{2}:|fe80:)/i.test(host)
+  );
+}
+
+app.post("/api/xtream/account", async (req, res) => {
+  const { xtreamUrl, username, password } = req.body || {};
+  if (![xtreamUrl, username, password].every((v) => typeof v === "string" && v))
+    return res.status(400).json({ error: "Panel URL, username and password are required" });
+  let parsed;
+  try {
+    parsed = new URL(xtreamUrl);
+  } catch {
+    return res.status(400).json({ error: "Invalid panel URL" });
+  }
+  if (!/^https?:$/.test(parsed.protocol) || isBlockedHost(parsed.hostname))
+    return res.status(400).json({ error: "Blocked host" });
+  try {
+    const info = await fetchAccountInfo(xtreamUrl.replace(/\/+$/, ""), username, password);
+    res.setHeader("Cache-Control", "no-store");
+    res.json(info);
+  } catch (e) {
+    res.status(e.status || 502).json({ error: e.message || "Account check failed" });
+  }
+});
 app.post("/encrypt", (req, res) => {
   if (!process.env.CONFIG_SECRET) {
     return res
@@ -108,17 +126,7 @@ app.post("/api/prefetch", async (req, res) => {
 
   try {
     const u = new URL(url);
-    const host = u.hostname;
-    // Basic SSRF / local network block
-    if (
-      host === "localhost" ||
-      host === "0.0.0.0" ||
-      /^127\./.test(host) ||
-      /^10\./.test(host) ||
-      /^192\.168\./.test(host) ||
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
-      /^169\.254\./.test(host)
-    ) {
+    if (isBlockedHost(u.hostname)) {
       return res.status(400).json({ error: "Blocked host" });
     }
 
@@ -216,7 +224,12 @@ app.get("/health", (req, res) =>
   res.json({ status: "OK", timestamp: new Date().toISOString() }),
 );
 app.get("/api/info", (req, res) =>
-  res.json({ version: APP_VERSION, encryption: encryptionEnabled() }),
+  res.json({
+    version: APP_VERSION,
+    encryption: encryptionEnabled(),
+    sitePassword: sitePasswordEnabled(),
+    redis: redisStatus(),
+  }),
 );
 app.get("/favicon.ico", (req, res) =>
   res.sendFile(path.join(staticDir, "img", "icon.png")),
@@ -314,31 +327,12 @@ app.use("/:token", async (req, res, next) => {
   const ifaceKey =
     "iface:" + crypto.createHash("md5").update(token).digest("hex");
 
-  async function redisGet(key) {
-    if (!CACHE_ENABLED || !redisClient) return null;
-    try {
-      return await redisClient.get(key);
-    } catch {
-      return null;
-    }
-  }
-  async function redisSet(key, ttl) {
-    if (!CACHE_ENABLED || !redisClient) return;
-    try {
-      await redisClient.set(key, "1", "PX", ttl);
-    } catch {}
-  }
-
   let iface = CACHE_ENABLED ? interfaceCache.get(ifaceKey) : null;
   if (!iface) {
-    await redisGet(ifaceKey);
     try {
       dlog("Building addon interface (cache miss)", ifaceKey);
       iface = await createAddon(config);
-      if (CACHE_ENABLED) {
-        interfaceCache.set(ifaceKey, iface);
-        await redisSet(ifaceKey, INTERFACE_TTL_MS);
-      }
+      if (CACHE_ENABLED) interfaceCache.set(ifaceKey, iface);
     } catch (e) {
       console.error("[SERVER] Addon build failed:", e);
       return res.status(500).json({ error: "Addon build error" });

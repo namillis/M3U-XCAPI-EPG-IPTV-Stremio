@@ -32,6 +32,9 @@
   const customEpgUrlInp = document.getElementById("customEpgUrl");
   const xtreamUseM3UChk = document.getElementById("xtreamUseM3U");
   const xtreamOutputGroup = document.getElementById("xtreamOutputGroup");
+  const catchupChk = document.getElementById("catchup");
+  const checkAccountBtn = document.getElementById("checkAccountBtn");
+  const accountInfoEl = document.getElementById("accountInfo");
 
   const epgModeRadios = () => [
     ...document.querySelectorAll('input[name="epgMode"]'),
@@ -110,6 +113,65 @@
     let s = raw.trim();
     if (s.endsWith("/")) s = s.slice(0, -1);
     return s;
+  }
+
+  async function fetchAccount(baseUrl, username, password) {
+    const res = await fetch("/api/xtream/account", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ xtreamUrl: baseUrl, username, password }),
+    });
+    let body = {};
+    try {
+      body = await res.json();
+    } catch {}
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    return body;
+  }
+
+  function describeAccount(a) {
+    const parts = [a.status || "Unknown"];
+    if (a.expiresAt) {
+      const exp = new Date(a.expiresAt);
+      const days = Math.ceil((exp - Date.now()) / 86400000);
+      const date = exp.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+      parts.push(days >= 0 ? `expires ${date} (${days} day${days === 1 ? "" : "s"})` : `expired ${date}`);
+    } else {
+      parts.push("no expiry date");
+    }
+    if (a.maxConnections !== null && a.maxConnections !== undefined)
+      parts.push(`connections ${a.activeConnections ?? "?"} / ${a.maxConnections}`);
+    if (a.isTrial) parts.push("trial");
+    return parts.join(" · ");
+  }
+
+  function renderAccount(state, text) {
+    if (!accountInfoEl) return;
+    accountInfoEl.className = `account-info ${state}`;
+    accountInfoEl.textContent = text;
+  }
+
+  if (checkAccountBtn) {
+    checkAccountBtn.addEventListener("click", async () => {
+      const baseUrl = normalizedBaseUrl(xtreamUrlInput.value);
+      const username = userInput.value.trim();
+      const password = pwdInput.value;
+      if (!validateUrl(baseUrl) || !username || !password) {
+        renderAccount("warn", "Enter the panel URL, username and password first.");
+        return;
+      }
+      checkAccountBtn.disabled = true;
+      renderAccount("", "Checking…");
+      try {
+        const a = await fetchAccount(baseUrl, username, password);
+        const ok = String(a.status).toLowerCase() === "active";
+        renderAccount(ok ? "ok" : "warn", describeAccount(a));
+      } catch (err) {
+        renderAccount("error", err.message);
+      } finally {
+        checkAccountBtn.disabled = false;
+      }
+    });
   }
 
   async function fetchTextBrowser(url, phaseLabel) {
@@ -246,7 +308,7 @@
     setProgress(5, "Starting");
     appendDetail("== PRE-FLIGHT (XTREAM) ==");
     appendDetail(`Base URL: ${baseUrl}`);
-    appendDetail(`Mode: 'JSON API'}`);
+    appendDetail(`Mode: ${xtreamUseM3UChk && xtreamUseM3UChk.checked ? "m3u_plus playlist" : "JSON API"}`);
     appendDetail(
       `EPG Mode: ${enableEpgInitial ? (epgMode === "custom" ? "Custom URL" : "Panel XMLTV") : "Disabled"}`,
     );
@@ -261,6 +323,14 @@
       let epgStats = { programmes: 0, channels: 0 };
 
       const base = `${baseUrl}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+      setProgress(8, "Checking account");
+      try {
+        const account = await fetchAccount(baseUrl, username, password);
+        appendDetail(`✔ Account: ${describeAccount(account)}`);
+        renderAccount(String(account.status).toLowerCase() === "active" ? "ok" : "warn", describeAccount(account));
+      } catch (accErr) {
+        appendDetail(`⚠ Account check failed: ${accErr.message}`);
+      }
       setProgress(12, "Fetching Live Streams");
       let liveJsonText;
       try {
@@ -285,6 +355,14 @@
       }
       liveCount = Array.isArray(liveList) ? liveList.length : 0;
       appendDetail(`✔ Live streams: ${liveCount.toLocaleString()}`);
+      const archiveCount = Array.isArray(liveList)
+        ? liveList.filter((l) => Number(l.tv_archive) === 1).length
+        : 0;
+      appendDetail(
+        archiveCount
+          ? `✔ Catch-up available on ${archiveCount.toLocaleString()} channels`
+          : "Catch-up: panel doesn't record any channels",
+      );
 
       let vodList = [];
       if (liveOnly) {
@@ -374,6 +452,7 @@
         debug: debug || undefined,
       };
       if (liveOnly) config.liveOnly = true;
+      if (catchupChk && catchupChk.checked) config.catchup = true;
       if (groupCatChk && groupCatChk.checked) {
         config.groupCatalogs = true;
         if (groupFilterInp && groupFilterInp.value.trim())

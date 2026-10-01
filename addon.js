@@ -7,22 +7,53 @@ const crypto = require("crypto");
 const LRUCache = require("./lruCache");
 const { version: ADDON_VERSION } = require("./package.json");
 const fetch = require('node-fetch');
+const zlib = require('zlib');
+const { promisify } = require('util');
+const gzip = promisify(zlib.gzip);
+const gunzip = promisify(zlib.gunzip);
+
+const REDIS_TTL_MS = parseInt(process.env.REDIS_TTL_MS || (24 * 3600 * 1000).toString(), 10);
+const REDIS_MAX_BYTES = parseInt(process.env.REDIS_MAX_BYTES || (9.5 * 1024 * 1024).toString(), 10);
+const REDIS_TIMEOUT_MS = 4000;
 
 let redisClient = null;
+let redisLastError = null;
 if (process.env.REDIS_URL) {
     try {
         const { Redis } = require('ioredis');
         redisClient = new Redis(process.env.REDIS_URL, {
             lazyConnect: true,
-            maxRetriesPerRequest: 2
+            maxRetriesPerRequest: 2,
+            connectTimeout: 10000
         });
-        redisClient.on('error', e => console.error('[REDIS] Error:', e.message));
+        redisClient.on('error', e => {
+            redisLastError = e.message;
+            console.error('[REDIS] Error:', e.message);
+        });
+        redisClient.on('ready', () => {
+            redisLastError = null;
+            console.log('[REDIS] Ready');
+        });
         redisClient.connect().catch(err => console.error('[REDIS] Connect failed:', err.message));
         console.log('[REDIS] Enabled');
     } catch (e) {
         console.warn('[REDIS] ioredis not installed or failed, falling back to in-memory LRU');
         redisClient = null;
     }
+}
+
+function redisStatus() {
+    if (!redisClient) return 'off';
+    if (redisClient.status === 'ready') return 'connected';
+    return redisLastError ? 'error' : 'connecting';
+}
+
+function withTimeout(promise, ms) {
+    let timer;
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), ms); })
+    ]).finally(() => clearTimeout(timer));
 }
 
 const ADDON_NAME = "M3U/EPG TV Addon";
@@ -49,16 +80,29 @@ const buildPromiseCache = new Map();
 async function redisGetJSON(key) {
     if (!redisClient) return null;
     try {
-        const raw = await redisClient.get(key);
-        if (!raw) return null;
-        return JSON.parse(raw);
-    } catch { return null; }
+        const raw = await withTimeout(redisClient.getBuffer(key), REDIS_TIMEOUT_MS);
+        if (!raw || !raw.length) return null;
+        const isGzip = raw[0] === 0x1f && raw[1] === 0x8b;
+        const text = isGzip ? (await gunzip(raw)).toString('utf8') : raw.toString('utf8');
+        return JSON.parse(text);
+    } catch (e) {
+        console.warn('[REDIS] Read failed:', e.message);
+        return null;
+    }
 }
 async function redisSetJSON(key, value, ttl) {
     if (!redisClient) return;
     try {
-        await redisClient.set(key, JSON.stringify(value), 'PX', ttl);
-    } catch { /* ignore */ }
+        const packed = await gzip(Buffer.from(JSON.stringify(value), 'utf8'));
+        if (packed.length > REDIS_MAX_BYTES) {
+            console.warn(`[REDIS] Skipped save: ${(packed.length / 1048576).toFixed(1)} MB compressed is over the ${(REDIS_MAX_BYTES / 1048576).toFixed(1)} MB limit`);
+            return;
+        }
+        await withTimeout(redisClient.set(key, packed, 'PX', ttl), REDIS_TIMEOUT_MS * 3);
+        console.log(`[REDIS] Saved ${(packed.length / 1024).toFixed(0)} KB`);
+    } catch (e) {
+        console.warn('[REDIS] Save failed:', e.message);
+    }
 }
 
 const GROUP_CATALOG_MAX = 100;
@@ -69,6 +113,8 @@ function isSeparator(item) {
 }
 const EPG_PAST_MS = 3 * 3600000;
 const EPG_FUTURE_MS = 36 * 3600000;
+const CATCHUP_TTL_MS = 5 * 60 * 1000;
+const CATCHUP_CACHE_MAX = 200;
 const EPG_DESC_MAX = 400;
 
 function validTimezone(tz) {
@@ -101,7 +147,8 @@ function createCacheKey(config) {
         groupCatalogs: !!config.groupCatalogs,
         groupFilter: config.groupFilter || '',
         includeSeries: config.includeSeries !== false, // default true
-        liveOnly: !!config.liveOnly
+        liveOnly: !!config.liveOnly,
+        catchup: !!config.catchup
     };
     return crypto.createHash('md5').update(stableStringify(minimal)).digest('hex');
 }
@@ -120,6 +167,7 @@ class M3UEPGAddon {
         this.movies = [];   // VOD movies
         this.series = [];   // Series (shows)
         this.seriesInfoCache = new Map(); // seriesId -> { videos: [...], fetchedAt }
+        this.catchupCache = new Map();
         this.epgData = {};
         this.lastUpdate = 0;
         this.log = makeLogger(config.debug);
@@ -190,7 +238,7 @@ class M3UEPGAddon {
             lastUpdate: this.lastUpdate
         };
         dataCache.set(cacheKey, entry);
-        await redisSetJSON(cacheKey, entry, CACHE_TTL_MS);
+        await redisSetJSON(cacheKey, entry, REDIS_TTL_MS);
         this.log.debug('Saved data to cache');
     }
 
@@ -578,10 +626,23 @@ class M3UEPGAddon {
                 return;
             }
         }
+        if (this.updatePromise) return this.updatePromise;
+        this.updatePromise = this.runUpdate().finally(() => { this.updatePromise = null; });
+        return this.updatePromise;
+    }
+
+    async runUpdate() {
         try {
             const start = Date.now();
             const providerModule = require(`./src/js/providers/${this.providerName}Provider.js`);
-            await providerModule.fetchData(this);
+            const staged = Object.create(this);
+            staged.channels = [];
+            staged.movies = [];
+            staged.series = [];
+            staged.epgData = {};
+            staged.directSeriesEpisodeIndex = new Map();
+            await providerModule.fetchData(staged);
+            for (const key of Object.keys(staged)) this[key] = staged[key];
             this.channels = this.channels.filter(i => !isSeparator(i));
             this.movies = this.movies.filter(i => !isSeparator(i));
             this.series = this.series.filter(i => !isSeparator(i));
@@ -659,10 +720,52 @@ class M3UEPGAddon {
         const item = all.find(i => i.id === id);
         if (!item) return null;
         return {
+            ...(item.type === 'tv' ? { name: 'Live' } : {}),
             url: item.url,
             title: item.type === 'tv' ? `${item.name} - Live` : item.name,
             behaviorHints: { notWebReady: true }
         };
+    }
+
+    catchupEnabledFor(item) {
+        return !!(item && item.type === 'tv' && item.archiveDays && this.config.catchup &&
+            this.providerName === 'xtream' && !this.config.xtreamUseM3U);
+    }
+
+    catchupLabel(entry) {
+        let date = new Date(entry.startTs * 1000);
+        const m = entry.start.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+        if (m && this.timezone && this.config.epgLocalTimes) {
+            date = this.zonedTimeToDate(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], 0);
+        }
+        const opts = { weekday: 'short', hour: 'numeric', minute: '2-digit' };
+        if (this.timezone) opts.timeZone = this.timezone;
+        return date.toLocaleString('en-US', opts);
+    }
+
+    async getCatchupStreams(id) {
+        const item = this.channels.find(i => i.id === id);
+        if (!this.catchupEnabledFor(item)) return [];
+        const cached = this.catchupCache.get(id);
+        if (cached && Date.now() - cached.at < CATCHUP_TTL_MS) return cached.streams;
+
+        let streams = [];
+        try {
+            const { fetchCatchup } = require('./src/js/providers/xtreamProvider.js');
+            const entries = await fetchCatchup(this, item);
+            streams = entries.map(e => ({
+                name: e.nowPlaying ? 'Start over' : 'Catch-up',
+                title: e.nowPlaying ? `⏪ ${e.title} (from ${this.catchupLabel(e)})` : `⏪ ${this.catchupLabel(e)} · ${e.title}`,
+                url: e.url,
+                behaviorHints: { notWebReady: true }
+            }));
+        } catch (e) {
+            this.log.warn('Catch-up lookup failed', id, e.message);
+        }
+        this.catchupCache.set(id, { at: Date.now(), streams });
+        if (this.catchupCache.size > CATCHUP_CACHE_MAX)
+            this.catchupCache.delete(this.catchupCache.keys().next().value);
+        return streams;
     }
 
     lookupEpisodeById(epId) {
@@ -757,6 +860,10 @@ class M3UEPGAddon {
                 for (const p of upcoming) {
                     description += `${this.formatTime(p.startTime)} - ${p.title}\n`;
                 }
+            }
+            if (this.catchupEnabledFor(item)) {
+                const days = item.archiveDays;
+                description += `\n\n⏪ CATCH-UP: shows from the last ${days} day${days === 1 ? '' : 's'} are in the stream list`;
             }
             return {
                 id: item.id,
@@ -853,9 +960,12 @@ async function createAddon(config) {
         const addonInstance = new M3UEPGAddon(config, manifest);
         await addonInstance.loadFromCache();
         try {
-            // Force update on first load to populate genres
-            if (!addonInstance.lastUpdate || (Date.now() - addonInstance.lastUpdate > addonInstance.updateInterval)) {
+            const hasData = addonInstance.channels.length || addonInstance.movies.length || addonInstance.series.length;
+            const stale = !addonInstance.lastUpdate || (Date.now() - addonInstance.lastUpdate > addonInstance.updateInterval);
+            if (!hasData) {
                 await addonInstance.updateData(true);
+            } else if (stale) {
+                addonInstance.updateData(true).catch(() => { });
             }
         } catch (e) {
             console.error('[ADDON] Initial update failed:', e);
@@ -937,7 +1047,8 @@ async function createAddon(config) {
                 if (addonInstance.config.debug) {
                     console.log('[DEBUG] Stream request', { id, url: stream.url });
                 }
-                return { streams: [stream] };
+                const catchup = type === 'tv' ? await addonInstance.getCatchupStreams(id) : [];
+                return { streams: [stream, ...catchup] };
             } catch (e) {
                 console.error('[STREAM] Error', e);
                 return { streams: [] };
@@ -1022,3 +1133,4 @@ async function createAddon(config) {
 }
 
 module.exports = createAddon;
+module.exports.redisStatus = redisStatus;

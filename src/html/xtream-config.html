@@ -48,6 +48,10 @@
                     </div>
                 </div>
             </div>
+            <div class="account-row">
+                <button type="button" id="checkAccountBtn" class="btn tiny ghost">Check account</button>
+                <div id="accountInfo" class="account-info hidden" aria-live="polite"></div>
+            </div>
         </fieldset>
 
         <fieldset class="section">
@@ -72,6 +76,13 @@
                 <input type="text" id="groupFilter" name="groupFilter" placeholder="usa, sports">
                 <small class="hint">Comma-separated, not case-sensitive. Leave blank for every group (up to 100 rows).</small>
             </div>
+            <label class="toggle" for="catchup">
+                <input type="checkbox" id="catchup" name="catchup" checked>
+                <span class="toggle-text">
+                    <span class="toggle-title">Catch-up for past shows</span>
+                    <span class="hint">On channels your panel records, the stream list adds "Start over" for the current show and recent past shows.</span>
+                </span>
+            </label>
         </fieldset>
 
         <fieldset class="section">
@@ -136,7 +147,7 @@
                     <input type="checkbox" id="xtreamUseM3U" name="xtreamUseM3U">
                     <span class="toggle-text">
                         <span class="toggle-title">Use the m3u_plus playlist instead of the JSON API</span>
-                        <span class="hint">Only for panels whose API is broken. Series are guessed from names in this mode.</span>
+                        <span class="hint">Only for panels whose API is broken. Series are guessed from names, and catch-up is not available in this mode.</span>
                     </span>
                 </label>
                 <div class="form-group hidden" id="xtreamOutputGroup">
@@ -165,7 +176,7 @@
         <ul class="feature-list">
             <li>Big panels take 10-30 seconds to check. The first load in Stremio after a deploy or a long break can take a bit longer.</li>
             <li>Channels and the guide refresh on their own. You only need to reinstall when you change a setting here.</li>
-            <li>Most accounts allow 1-2 streams at once. If a channel won't open, close the previous one and try again.</li>
+            <li>Most accounts allow 1-2 streams at once. If a channel won't open, close the previous one and try again. "Check account" shows how many are in use.</li>
         </ul>
     </section>
 </main>

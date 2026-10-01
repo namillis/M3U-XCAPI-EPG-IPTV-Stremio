@@ -11,6 +11,9 @@
 > - Live TV only mode (drops movie & series catalogs)
 > - Per-group channel catalogs with keyword filter
 > - Reconfigure from Stremio's Configure button (settings pre-filled)
+> - Xtream catch-up: "Start over" and recent past shows on recorded channels
+> - Xtream account check (status, expiry, connections in use)
+> - Optional site password for the setup pages
 > - Client pre‑flight validation with CORS bypass fallback
 > - Config tokens, encrypted automatically when `CONFIG_SECRET` is set
 > - Local LRU + Redis caching
@@ -142,6 +145,8 @@ Then open: `http://localhost:7000/`
    | `DEBUG_MODE` | `false` |
    | `CACHE_ENABLED` | `true` |
    | `PREFETCH_ENABLED` | `true` |
+   | `SITE_PASSWORD` | Optional. Locks the setup pages behind a password (see below). |
+   | `REDIS_URL` | Optional. Free Upstash Redis URL so restarts and deploys load instantly (see below). |
 
    Don't set `PORT`. Render injects its own, and the server reads `process.env.PORT`.
 
@@ -167,6 +172,27 @@ To prevent this, have a free external service request `/health` more often than 
 3. Schedule: every 10 minutes.
 
 cron-job.org gives up on a request after 30 seconds. If a ping lands while the service is still waking, that run shows as failed. This is harmless, and the next run succeeds.
+
+### Site password
+
+Your Render URL is public, so anyone who finds it could use your setup pages and the server's playlist fetcher. Set `SITE_PASSWORD` on Render and the browser asks for it (any username, this password) on:
+
+- the home and setup pages, including Stremio's **Configure** button
+- `/api/*` and `/encrypt`
+
+The addon itself (`/<token>/manifest.json`, catalogs, streams, logos), `/health` and the CSS/JS/icon files stay open, because Stremio and UptimeRobot can't send a password. Ten wrong attempts from one IP lock it out for 15 minutes.
+
+### Free Redis cache (Upstash)
+
+Without Redis, every deploy or restart wipes the cache, and the first Stremio request waits while the server downloads your whole channel list and guide again. With Redis, the server loads the last copy instantly and refreshes it in the background.
+
+1. Sign up at [upstash.com](https://upstash.com) (free, no card).
+2. Create a **Redis** database on the free plan. Pick the region closest to your Render service, e.g. US East (N. Virginia) for Render's Virginia region.
+3. Copy the connection URL that starts with `rediss://` (two s's, it uses TLS).
+4. On Render, add it as `REDIS_URL` and save. Render redeploys.
+5. Open your site. The home page shows **Redis cache connected** when it's working.
+
+The free plan (256 MB storage, 500K commands a month, 10 MB per request) is plenty: the addon stores one gzip-compressed copy per configuration and writes it about once an hour. If a compressed copy is over 9.5 MB the save is skipped and logged, and the addon keeps working from memory. **Live TV only** keeps it well under that.
 
 ### Render free tier notes
 
@@ -210,7 +236,8 @@ Decryption / parsing is done server-side before addon build. Changing `CONFIG_SE
 | `/api/prefetch` | POST | Server-side fetch (CORS bypass, size limited) |
 | `/encrypt` | POST | Returns encrypted token (requires `CONFIG_SECRET`) |
 | `/health` | GET | Health probe (JSON) |
-| `/api/info` | GET | Version and whether encryption is enabled (JSON) |
+| `/api/info` | GET | Version and whether encryption, site password and Redis are on (JSON) |
+| `/api/xtream/account` | POST | Xtream account status, expiry and connections (`{xtreamUrl, username, password}`) |
 
 ### Prefetch Example
 ```bash
@@ -230,6 +257,7 @@ curl -X POST http://localhost:7000/api/prefetch \
 | Series Catalog | Heuristic (SxxEyy / Season X) | Native `get_series` + `get_series_info` | Heuristic | Per-episode videos |
 | EPG | XMLTV custom or provided | Panel xmltv.php or custom | Panel xmltv.php or custom | Timezone + offset supported |
 | Live TV only | ✅ | ✅ (skips VOD/series downloads) | ✅ | Removes movie & series catalogs |
+| Catch-up | ❌ | ✅ (`tv_archive` channels) | ❌ | "Start over" + recent shows as extra streams |
 | Group catalogs | ✅ (group-title) | ✅ (categories) | ✅ | Optional keyword filter, max 100 |
 | Logos | tvg-logo / fallback proxy | Uses stream_icon / cover | tvg-logo where present | Multiple sources attempted |
 | CORS Bypass | Yes (prefetch) | Yes (prefetch) | Yes (prefetch) | Browser first, fallback server |
@@ -244,7 +272,10 @@ curl -X POST http://localhost:7000/api/prefetch \
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PORT` | `7000` | HTTP server port |
-| `REDIS_URL` | unset | Enable Redis caching (interface + data) |
+| `REDIS_URL` | unset | Redis for the channel/guide cache, e.g. Upstash `rediss://...` |
+| `REDIS_TTL_MS` | `86400000` (24h) | How long a cached copy lives in Redis |
+| `REDIS_MAX_BYTES` | `9961472` (9.5 MB) | Skip saving copies larger than this after gzip (Upstash free limit is 10 MB per request) |
+| `SITE_PASSWORD` | unset | Password for the setup pages and `/api/*` (HTTP Basic auth, any username) |
 | `CACHE_ENABLED` | `true` | Master toggle for LRU + Redis |
 | `CACHE_TTL_MS` | `21600000` (6h) | TTL for cached data |
 | `MAX_CACHE_ENTRIES` | `300` | LRU entry cap |
@@ -255,7 +286,7 @@ curl -X POST http://localhost:7000/api/prefetch \
 | `PREFETCH_EPG_MAX_BYTES` | `2000000` | Max bytes the config page downloads to sanity-check an EPG (server still loads the full guide) |
 | `NODE_ENV` | (user value) | Standard Node semantics |
 
-> Redis is optional. Without it, only in‑process LRU is used (per container).
+> Redis is optional. Without it, only in‑process LRU is used (per container), and a restart means a full re-download.
 
 ---
 
@@ -530,7 +561,9 @@ curl -X POST http://localhost:7000/encrypt \
 | Missing search results | Stremio partial search | Use shorter, distinctive search terms; ensure case-insensitive |
 | EPG times off | Guide uses local times labelled as UTC | Turn on "Guide times are already in my timezone" and keep `EPG Offset` at 0 |
 | "Ran out of memory" on a 512 MB host | Huge playlist (VOD + series) | Enable **Live TV only**, or add Redis / more RAM |
-| Channel fails, then plays on retry | Account stream limit or overloaded panel | Close other streams, wait a few seconds, retry |
+| Channel fails, then plays on retry | Account stream limit or overloaded panel | Click **Check account** to see connections in use; close other streams, retry |
+| No catch-up streams | Channel not recorded, m3u_plus mode, or catch-up off | Pre-flight log says how many channels have catch-up; use JSON API mode |
+| Catch-up stream won't play | Panel uses a different timeshift URL format | This addon uses `/timeshift/user/pass/minutes/YYYY-MM-DD:HH-MM/id.ts`; some panels only support `/streaming/timeshift.php` |
 
 ---
 

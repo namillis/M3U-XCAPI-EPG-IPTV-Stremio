@@ -428,6 +428,27 @@ textarea:focus {
 
 .pwd-wrapper input { flex: 1; }
 
+.account-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .75rem;
+}
+
+.account-info {
+    flex: 1 1 260px;
+    padding: .5rem .8rem;
+    font-size: .875rem;
+    color: var(--text-dim);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.account-info.ok { color: #c9f3e6; background: var(--success-soft); border-color: rgba(63, 191, 155, 0.35); }
+.account-info.warn { color: #ffe2bb; background: var(--warning-soft); border-color: rgba(255, 179, 71, 0.35); }
+.account-info.error { color: #ffd0d8; background: rgba(255, 92, 119, 0.12); border-color: rgba(255, 92, 119, 0.4); }
+
 /* Toggle switch rows */
 .toggle {
     display: flex;
