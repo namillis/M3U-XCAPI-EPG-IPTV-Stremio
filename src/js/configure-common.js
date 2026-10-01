@@ -7,6 +7,37 @@
     const statusDetails   = document.getElementById('statusDetails');
     const copyBtn         = document.getElementById('copyManifestBtn');
     const openBtn         = document.getElementById('openStremioBtn');
+    const manifestRow     = document.getElementById('manifestRow');
+    const manifestField   = document.getElementById('manifestUrlField');
+    const closeBtn        = document.getElementById('overlayCloseBtn');
+
+    if (closeBtn) closeBtn.addEventListener('click', () => hideOverlay());
+    if (manifestField) manifestField.addEventListener('focus', () => manifestField.select());
+
+    const groupCatToggle = document.getElementById('groupCatalogs');
+    const groupFilterRow = document.getElementById('groupFilterGroup');
+    function syncGroupFilter() {
+        if (groupCatToggle && groupFilterRow)
+            groupFilterRow.classList.toggle('hidden', !groupCatToggle.checked);
+    }
+    if (groupCatToggle) groupCatToggle.addEventListener('change', syncGroupFilter);
+    syncGroupFilter();
+
+    function openAdvancedIfUsed() {
+        document.querySelectorAll('details.advanced').forEach(d => {
+            const used = [...d.querySelectorAll('input')].some(i =>
+                i.type === 'checkbox' ? i.checked : i.value.trim() !== '' && i.value.trim() !== '0');
+            if (used) d.open = true;
+        });
+    }
+
+    fetch('/api/info', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(info => {
+            if (!info || !info.version) return;
+            document.querySelectorAll('[data-version]').forEach(el => { el.textContent = 'v' + info.version; });
+        })
+        .catch(() => {});
 
     // Polling / timing constants
     const POLL_INTERVAL_MS     = 1500;
@@ -36,6 +67,7 @@
             copyBtn.classList.add('locked');
             copyBtn.style.display = 'none'; // HIDE until ready
         }
+        if (manifestRow) manifestRow.classList.add('hidden');
     }
 
     function enableActionButtons() {
@@ -49,6 +81,7 @@
             copyBtn.classList.remove('locked');
             copyBtn.style.display = ''; // SHOW when ready
         }
+        if (manifestRow && manifestUrl) manifestRow.classList.remove('hidden');
     }
 
     function showOverlay(isManualPrePhase = false) {
@@ -110,19 +143,6 @@
                     setProgress(100, 'Ready');
                     appendDetail('Manifest ready.');
                     enableActionButtons(); // ENABLE ONLY HERE
-                    // Inject a Close button (success case) if not already present
-                    try {
-                        const status = document.getElementById('statusDetails');
-                        if (status && !document.getElementById('successCloseBtn')) {
-                            const btn = document.createElement('button');
-                            btn.id = 'successCloseBtn';
-                            btn.textContent = 'Close';
-                            btn.className = 'btn secondary';
-                            btn.style.marginTop = '14px';
-                            btn.addEventListener('click', hideOverlay);
-                            status.parentElement.appendChild(btn);
-                        }
-                    } catch (e) { /* ignore DOM injection errors */ }
                     if (!autoOpened) {
                         autoOpened = true;
                         // Do not force-open if user might want to copy first.
@@ -191,12 +211,34 @@
         return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
     }
 
-    function buildUrls(config) {
-        const token = encodeConfigBase64Url(config);
+    async function encryptedToken(config) {
+        try {
+            const res = await fetch('/encrypt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            });
+            if (!res.ok) return null;
+            const { token } = await res.json();
+            return typeof token === 'string' && token.startsWith('enc:') ? token : null;
+        } catch {
+            return null;
+        }
+    }
+
+    async function buildUrls(config) {
+        let token = await encryptedToken(config);
+        if (token) {
+            appendDetail('✔ Config encrypted (CONFIG_SECRET)');
+        } else {
+            token = encodeConfigBase64Url(config);
+            appendDetail('⚠ Server encryption unavailable (set CONFIG_SECRET) – using plain token');
+        }
         const origin = window.location.origin;
         manifestUrl = `${origin}/${token}/manifest.json`;
         const hostPart = origin.replace(/^https?:\/\//, '');
         stremioUrl = `stremio://${hostPart}/${token}/manifest.json`;
+        if (manifestField) manifestField.value = manifestUrl;
         return { token, manifestUrl, stremioUrl };
     }
 
@@ -252,6 +294,7 @@
         setField('groupCatalogs', !!cfg.groupCatalogs);
         setField('groupFilter', cfg.groupFilter || '');
         setField('debugMode', !!cfg.debug);
+        openAdvancedIfUsed();
         return cfg;
     }
 

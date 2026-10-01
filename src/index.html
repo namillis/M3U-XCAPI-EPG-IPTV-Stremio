@@ -3,9 +3,10 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>M3U/EPG Addon Configuration</title>
+    <title>M3U/EPG TV Addon for Stremio</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="color-scheme" content="dark light">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#101119">
     <link rel="icon" type="image/png" href="/img/icon.png">
     <link rel="apple-touch-icon" href="/img/icon.png">
     <link rel="stylesheet" href="/css/styles.css">
@@ -14,67 +15,106 @@
 <body class="page-root">
     <header class="site-header">
         <div class="inner">
-            <img src="/img/icon.png" alt="" class="app-logo" width="56" height="56">
-            <h1 class="app-title">M3U/EPG Addon Configuration V2.0.0</h1>
-            <p class="subtitle">Choose how you would like to set up your M3U/EPG Addon.</p>
+            <a href="/" class="brand"><img src="/img/icon.png" alt="" width="32" height="32"><span>M3U/EPG TV Addon</span></a>
+            <nav class="top-nav">
+                <a href="/html/xtream-config.html" class="nav-link">Xtream Codes</a>
+                <a href="/html/direct-config.html" class="nav-link">Direct M3U</a>
+            </nav>
         </div>
     </header>
 
     <main class="main-content">
-        <section class="card-grid">
-            <article class="option-card">
-                <h2>Direct M3U / EPG</h2>
-                <p>Provide a direct playlist URL and optional XMLTV guide.</p>
-                <a class="btn primary" href="/html/direct-config.html">Configure Direct</a>
-            </article>
-            <article class="option-card">
-                <h2>Xtream Codes API</h2>
-                <p>Use Xtream panel credentials or m3u_plus output with optional custom EPG.</p>
-                <a class="btn primary" href="/html/xtream-config.html">Configure Xtream</a>
-            </article>
-            <article class="option-card">
-                <h2>Support Development</h2>
-                <p>If this addon helps you, consider buying me a coffee to support continued development and hosting.
-                </p>
-                <div class="donate-wrapper">
-                    <!-- BuyMeACoffee Button -->
-                    <script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js"
-                        data-name="bmc-button" data-slug="K3QSoR2" data-color="#BD5FFF" data-emoji="☕"
-                        data-font="Cookie" data-text="Buy me a coffee" data-outline-color="#000000"
-                        data-font-color="#ffffff" data-coffee-color="#FFDD00">
-                        </script>
+        <section class="hero">
+            <h1>Your IPTV, <span>inside Stremio</span></h1>
+            <p>Turn an Xtream Codes login or an M3U playlist into Stremio catalogs, with what's on now and next for every channel.</p>
+            <div class="status-row">
+                <span class="chip plain" data-version>v…</span>
+                <span class="chip" id="encChip">Checking encryption…</span>
+            </div>
+        </section>
+
+        <section>
+            <h2 class="section-title">Pick your source</h2>
+            <div class="card-grid">
+                <a class="option-card" href="/html/xtream-config.html">
+                    <span class="eyebrow">Recommended for panels</span>
+                    <h2>Xtream Codes</h2>
+                    <p>Sign in with your panel URL, username and password.</p>
+                    <ul class="check-list">
+                        <li>Live channels, movies and series</li>
+                        <li>Real series with seasons and episodes</li>
+                        <li>Panel guide or your own XMLTV URL</li>
+                    </ul>
+                    <span class="btn primary">Set up Xtream</span>
+                </a>
+                <a class="option-card" href="/html/direct-config.html">
+                    <span class="eyebrow">Any playlist</span>
+                    <h2>Direct M3U</h2>
+                    <p>Paste a playlist URL and, if you have one, an XMLTV guide URL.</p>
+                    <ul class="check-list">
+                        <li>Works with any M3U / M3U8 playlist</li>
+                        <li>Movies and series detected from names</li>
+                        <li>Optional XMLTV guide</li>
+                    </ul>
+                    <span class="btn secondary">Set up Direct</span>
+                </a>
+            </div>
+        </section>
+
+        <section>
+            <h2 class="section-title">What you get</h2>
+            <div class="feature-grid">
+                <div class="feature">
+                    <h3>Now and next</h3>
+                    <p>Channel pages show the current show and what's coming up, in your timezone, with daylight saving handled.</p>
                 </div>
-            </article>
+                <div class="feature">
+                    <h3>Group rows</h3>
+                    <p>Each channel group, like <em>USA | SPORTS</em>, can be its own row on the Stremio home screen, filtered by keyword.</p>
+                </div>
+                <div class="feature">
+                    <h3>Live TV only</h3>
+                    <p>Drop movies and series completely for faster loads and lower memory.</p>
+                </div>
+                <div class="feature">
+                    <h3>Search</h3>
+                    <p>Find channels, movies and series from Stremio's search bar.</p>
+                </div>
+                <div class="feature">
+                    <h3>Configure from Stremio</h3>
+                    <p>The addon's Configure button reopens this site with your current settings filled in.</p>
+                </div>
+                <div class="feature">
+                    <h3>Encrypted install links</h3>
+                    <p>When the server has <code>CONFIG_SECRET</code> set, your login is encrypted inside the addon URL.</p>
+                </div>
+                <div class="feature">
+                    <h3>Stays up to date</h3>
+                    <p>Channels and guide data refresh on their own about every hour. No reinstall needed.</p>
+                </div>
+                <div class="feature">
+                    <h3>Light on memory</h3>
+                    <p>Big guides are streamed and trimmed to the next 36 hours, so it fits a free 512 MB host.</p>
+                </div>
+            </div>
         </section>
 
         <section class="info-panel">
-            <h3>About the Addon</h3>
-            <p>This addon integrates IPTV playlists and TV guides into Stremio. Your configuration is encoded into a
-                token so you can reinstall or share securely.</p>
+            <h3>Tips</h3>
             <ul class="feature-list">
-                <li>M3U + XMLTV (Direct)</li>
-                <li>Xtream Codes JSON / m3u_plus</li>
-                <li>Optional custom EPG + offset</li>
-                <li>Channel, Movie & Series catalogs</li>
-                <li>Local + Redis caching support</li>
+                <li><strong>Changing a setting:</strong> open the addon in Stremio and click Configure, or set it up again here. Either way, reinstall with the new link.</li>
+                <li><strong>Guide a few hours off:</strong> turn on "Guide times are already in my timezone" and leave EPG Offset at 0.</li>
+                <li><strong>Too many rows:</strong> with group catalogs on, use "Only groups containing" to keep just the groups you watch.</li>
+                <li><strong>A channel won't play:</strong> most accounts allow 1-2 streams at once. Close the previous stream and try again.</li>
             </ul>
-            <br>
-            <h3>Credits</h3>
-            <ul class="feature-list">
-                <li>Made with ❤️ by Inside4ndroid</li>
-                <li>Hosted by skyecraft92</li>
-                <li>Icon by <a href="https://www.flaticon.com/free-icons/tv" target="_blank" rel="noopener">Freepik -
-                        Flaticon</a></li>
-                <li>BuyMeACoffee button by <a href="https://www.buymeacoffee.com/" target="_blank"
-                        rel="noopener">BuyMeACoffee</a></li>
         </section>
     </main>
 
     <footer class="site-footer">
-        <div class="inner">
-            <p>M3U/EPG Addon • &copy; 2025 • Made with ❤️ by Inside4ndroid</p>
-        </div>
+        <p>M3U/EPG TV Addon · <span data-version></span></p>
     </footer>
+
+    <script src="/js/home.js"></script>
 </body>
 
 </html>

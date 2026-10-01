@@ -5,6 +5,7 @@ require('dotenv').config();
 const { addonBuilder } = require("stremio-addon-sdk");
 const crypto = require("crypto");
 const LRUCache = require("./lruCache");
+const { version: ADDON_VERSION } = require("./package.json");
 const fetch = require('node-fetch');
 
 let redisClient = null;
@@ -792,9 +793,9 @@ class M3UEPGAddon {
 async function createAddon(config) {
     const manifest = {
         id: ADDON_ID,
-        version: "2.0.0",
+        version: ADDON_VERSION,
         name: ADDON_NAME,
-        description: "IPTV addon (M3U / EPG / Xtream) with encrypted configs, caching & series support (Xtream + Direct)",
+        description: "Live TV, movies and series from an M3U playlist or Xtream Codes panel, with XMLTV guide info.",
         resources: ["catalog", "stream", "meta"],
         types: ["tv", "movie", "series"],
         catalogs: [

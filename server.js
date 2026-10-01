@@ -8,7 +8,12 @@ const path = require("path");
 const crypto = require("crypto");
 const fetch = require("node-fetch");
 const createAddon = require("./addon");
-const { encryptConfig, tryParseConfigToken } = require("./cryptoConfig");
+const {
+  encryptConfig,
+  encryptionEnabled,
+  tryParseConfigToken,
+} = require("./cryptoConfig");
+const { version: APP_VERSION } = require("./package.json");
 const LRUCache = require("./lruCache");
 
 const DEBUG = (process.env.DEBUG_MODE || "").toLowerCase() === "true";
@@ -209,6 +214,9 @@ app.get("/", (req, res) => {
 
 app.get("/health", (req, res) =>
   res.json({ status: "OK", timestamp: new Date().toISOString() }),
+);
+app.get("/api/info", (req, res) =>
+  res.json({ version: APP_VERSION, encryption: encryptionEnabled() }),
 );
 app.get("/favicon.ico", (req, res) =>
   res.sendFile(path.join(staticDir, "img", "icon.png")),

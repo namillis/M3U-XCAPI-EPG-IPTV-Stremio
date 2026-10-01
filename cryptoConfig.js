@@ -21,7 +21,7 @@ function encryptConfig(jsonStr) {
     const ciphertext = Buffer.concat([cipher.update(jsonStr, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
     const payload = Buffer.concat([iv, tag, ciphertext]);
-    return 'enc:' + payload.toString('base64');
+    return 'enc:' + payload.toString('base64url');
 }
 
 /**
@@ -74,8 +74,13 @@ function tryParseConfigToken(token) {
     }
 }
 
+function encryptionEnabled() {
+    return !!getSecret();
+}
+
 module.exports = {
     encryptConfig,
+    encryptionEnabled,
     decryptConfig,
     tryParseConfigToken
 };
