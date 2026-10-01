@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Xtream API Configuration • IPTV Addon</title>
+    <title>Xtream Codes setup · M3U/EPG TV Addon</title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="color-scheme" content="dark light">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#101119">
     <link rel="icon" type="image/png" href="/img/icon.png">
     <link rel="apple-touch-icon" href="/img/icon.png">
     <link rel="stylesheet" href="/css/styles.css">
@@ -12,174 +13,185 @@
 <body class="page-config">
 <header class="site-header">
     <div class="inner">
-        <img src="/img/icon.png" alt="" class="app-logo" width="56" height="56">
-        <h1 class="app-title">Xtream Codes API</h1>
-        <p class="subtitle">Connect using panel credentials and an optional custom EPG.</p>
+        <a href="/" class="brand"><img src="/img/icon.png" alt="" width="32" height="32"><span>M3U/EPG TV Addon</span></a>
         <nav class="top-nav">
-            <a href="/" class="nav-link">Home</a>
-            <a href="/html/direct-config.html" class="nav-link">Direct Mode</a>
+            <a href="/html/xtream-config.html" class="nav-link active">Xtream Codes</a>
+            <a href="/html/direct-config.html" class="nav-link">Direct M3U</a>
         </nav>
     </div>
 </header>
 
 <main class="main-content narrow">
+    <section class="page-intro">
+        <h1>Xtream Codes</h1>
+        <p>Sign in with your panel login. Your details are checked from this page, then the server builds the addon.</p>
+    </section>
+
     <form id="xtreamForm" class="config-form" autocomplete="off">
-        <fieldset>
-            <legend>Credentials</legend>
+        <fieldset class="section">
+            <legend>Panel login</legend>
             <div class="form-group">
-                <label for="xtreamUrl">Xtream Base URL <span class="req">*</span></label>
+                <label for="xtreamUrl">Panel URL <span class="req">*</span></label>
                 <input type="url" id="xtreamUrl" name="xtreamUrl" required placeholder="http://panel.example.com:8080">
-                <small class="hint">Do not include a trailing slash.</small>
+                <small class="hint">Include the port if your provider gave you one. No trailing slash.</small>
             </div>
-            <div class="form-group">
-                <label for="xtreamUsername">Username <span class="req">*</span></label>
-                <input type="text" id="xtreamUsername" name="xtreamUsername" required>
-            </div>
-            <div class="form-group password-group">
-                <label for="xtreamPassword">Password <span class="req">*</span></label>
-                <div class="pwd-wrapper">
-                    <input type="password" id="xtreamPassword" name="xtreamPassword" required>
-                    <button type="button" id="togglePwd" class="btn tiny ghost">Show</button>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="xtreamUsername">Username <span class="req">*</span></label>
+                    <input type="text" id="xtreamUsername" name="xtreamUsername" required autocapitalize="off" spellcheck="false">
+                </div>
+                <div class="form-group">
+                    <label for="xtreamPassword">Password <span class="req">*</span></label>
+                    <div class="pwd-wrapper">
+                        <input type="password" id="xtreamPassword" name="xtreamPassword" required>
+                        <button type="button" id="togglePwd" class="btn tiny ghost">Show</button>
+                    </div>
                 </div>
             </div>
         </fieldset>
 
-        <fieldset>
-            <legend>Stream Source</legend>
-            <div class="form-group checkbox-line">
-                <input type="checkbox" id="xtreamUseM3U" name="xtreamUseM3U">
-                <label class="checkbox-label" for="xtreamUseM3U" class="inline">Use m3u_plus playlist (instead of JSON)</label>
-            </div>
-            <div class="form-group hidden" id="xtreamOutputGroup">
-                <label for="xtreamOutput">M3U Output Format</label>
-                <input type="text" id="xtreamOutput" name="xtreamOutput" placeholder="ts / hls / mpegts">
-                <small class="hint">Leave blank for panel default.</small>
+        <fieldset class="section">
+            <legend>Content</legend>
+            <p class="section-desc">Choose what shows up in Stremio.</p>
+            <label class="toggle" for="liveOnly">
+                <input type="checkbox" id="liveOnly" name="liveOnly">
+                <span class="toggle-text">
+                    <span class="toggle-title">Live TV only</span>
+                    <span class="hint">Skips movies and series entirely. Faster loads and lower memory on big providers.</span>
+                </span>
+            </label>
+            <label class="toggle" for="groupCatalogs">
+                <input type="checkbox" id="groupCatalogs" name="groupCatalogs">
+                <span class="toggle-text">
+                    <span class="toggle-title">Show each channel group as its own row</span>
+                    <span class="hint">Groups like "USA | SPORTS" each become a catalog on the Stremio home screen.</span>
+                </span>
+            </label>
+            <div class="form-group hidden" id="groupFilterGroup">
+                <label for="groupFilter">Only groups containing</label>
+                <input type="text" id="groupFilter" name="groupFilter" placeholder="usa, sports">
+                <small class="hint">Comma-separated, not case-sensitive. Leave blank for every group (up to 100 rows).</small>
             </div>
         </fieldset>
 
-        <fieldset>
-            <legend>EPG Options</legend>
-            <div class="form-group checkbox-line">
+        <fieldset class="section">
+            <legend>TV guide</legend>
+            <p class="section-desc">Powers the "now playing" and "upcoming" info on channel pages.</p>
+            <label class="toggle" for="enableEpg">
                 <input type="checkbox" id="enableEpg" name="enableEpg" checked>
-                <label class="checkbox-label" for="enableEpg" class="inline">Enable EPG</label>
-            </div>
+                <span class="toggle-text">
+                    <span class="toggle-title">Enable guide</span>
+                    <span class="hint">If the guide can't be loaded, the addon still works without it.</span>
+                </span>
+            </label>
 
             <div id="epgModeBlock" class="form-group">
-                <label class="group-label">EPG Source Mode</label>
-                <div class="radio-group">
-                    <label class="checkbox-line">
+                <span class="group-label">Guide source</span>
+                <div class="choice-group">
+                    <label class="choice">
                         <input type="radio" name="epgMode" value="xtream" checked>
-                        <span class="checkbox-label">Panel XMLTV</span>
+                        <span>Panel guide (xmltv.php)</span>
                     </label>
-                    <label class="checkbox-line">
+                    <label class="choice">
                         <input type="radio" name="epgMode" value="custom">
-                        <span class="checkbox-label">Custom EPG URL</span>
+                        <span>Custom XMLTV URL</span>
                     </label>
                 </div>
             </div>
 
             <div class="form-group hidden" id="customEpgGroup">
-                <label for="customEpgUrl">Custom EPG XML URL</label>
+                <label for="customEpgUrl">Custom XMLTV URL</label>
                 <input type="url" id="customEpgUrl" name="customEpgUrl" placeholder="https://example.com/epg.xml">
-                <small class="hint">Used instead of panel xmltv.php when selected.</small>
+                <small class="hint">Used instead of the panel guide. Channel IDs need to match your panel's.</small>
             </div>
 
             <div class="form-group">
-                <label for="epgOffsetHours">EPG Offset (hours)</label>
-                <input type="number" step="0.25" id="epgOffsetHours" name="epgOffsetHours" placeholder="0">
-            </div>
-            <div class="form-group">
-                <label for="epgTimezone">Your Timezone</label>
+                <label for="epgTimezone">Your timezone</label>
                 <input type="text" id="epgTimezone" name="epgTimezone" placeholder="America/New_York" list="tzList">
                 <datalist id="tzList">
                     <option value="America/New_York"><option value="America/Chicago"><option value="America/Denver">
                     <option value="America/Los_Angeles"><option value="America/Phoenix"><option value="Europe/London">
                     <option value="Europe/Berlin"><option value="Asia/Dubai"><option value="Asia/Kolkata"><option value="Australia/Sydney">
                 </datalist>
-                <small class="hint">Detected from your browser. Guide times are shown in this zone, with daylight saving handled automatically.</small>
+                <small class="hint">Filled in from your browser. Guide times are shown in this zone, with daylight saving handled.</small>
             </div>
-            <div class="form-group checkbox-line">
+            <label class="toggle" for="epgLocalTimes">
                 <input type="checkbox" id="epgLocalTimes" name="epgLocalTimes">
-                <label class="checkbox-label" for="epgLocalTimes">Guide times are already in my timezone (ignore the guide's UTC labels)</label>
-            </div>
-            <small class="hint">Tick this if Now Playing is off by exactly your UTC offset. Leave EPG Offset at 0 when using it.</small>
+                <span class="toggle-text">
+                    <span class="toggle-title">Guide times are already in my timezone</span>
+                    <span class="hint">Turn this on if "now playing" is off by exactly your UTC offset. Keep EPG Offset at 0 when it's on.</span>
+                </span>
+            </label>
         </fieldset>
 
-        <fieldset>
-            <legend>Content</legend>
-            <div class="form-group checkbox-line">
-                <input type="checkbox" id="liveOnly" name="liveOnly">
-                <label class="checkbox-label" for="liveOnly">Live TV only (exclude Movies &amp; Series)</label>
+        <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="advanced-body">
+                <div class="form-group">
+                    <label for="epgOffsetHours">EPG Offset (hours)</label>
+                    <input type="number" step="0.25" id="epgOffsetHours" name="epgOffsetHours" placeholder="0">
+                    <small class="hint">Manually shifts every guide time, e.g. -1 or 2. Usually not needed with the timezone settings.</small>
+                </div>
+                <label class="toggle" for="xtreamUseM3U">
+                    <input type="checkbox" id="xtreamUseM3U" name="xtreamUseM3U">
+                    <span class="toggle-text">
+                        <span class="toggle-title">Use the m3u_plus playlist instead of the JSON API</span>
+                        <span class="hint">Only for panels whose API is broken. Series are guessed from names in this mode.</span>
+                    </span>
+                </label>
+                <div class="form-group hidden" id="xtreamOutputGroup">
+                    <label for="xtreamOutput">Playlist output format</label>
+                    <input type="text" id="xtreamOutput" name="xtreamOutput" placeholder="ts, hls or mpegts">
+                    <small class="hint">Leave blank for the panel default.</small>
+                </div>
+                <label class="toggle" for="debugMode">
+                    <input type="checkbox" id="debugMode" name="debugMode">
+                    <span class="toggle-text">
+                        <span class="toggle-title">Debug logging</span>
+                        <span class="hint">Writes extra detail to the server logs for this install.</span>
+                    </span>
+                </label>
             </div>
-            <small class="hint">Skips VOD and series entirely. Faster loads and lower memory on large providers.</small>
-            <div class="form-group checkbox-line">
-                <input type="checkbox" id="groupCatalogs" name="groupCatalogs">
-                <label class="checkbox-label" for="groupCatalogs">Show each channel group as its own catalog</label>
-            </div>
-            <div class="form-group">
-                <label for="groupFilter">Only groups containing (optional)</label>
-                <input type="text" id="groupFilter" name="groupFilter" placeholder="USA, UK | SPORTS">
-                <small class="hint">Comma-separated, case-insensitive. Each match becomes a row on the Stremio home screen (max 100). Leave blank for all groups.</small>
-            </div>
-        </fieldset>
-
-        <fieldset>
-            <legend>Diagnostics</legend>
-            <div class="form-group checkbox-line">
-                <input type="checkbox" id="debugMode" name="debugMode">
-                <label class="checkbox-label" for="debugMode" class="inline">Enable Debug Logging</label>
-            </div>
-        </fieldset>
+        </details>
 
         <div class="form-actions">
-            <button type="submit" class="btn primary wide">Install / Update (Xtream)</button>
-            <a href="/html/direct-config.html" class="btn subtle">Switch to Direct</a>
-        </div>
-        <div class="donate-inline under-form">
-            <p class="hint" style="margin:.4rem 0 .6rem;">Enjoying the addon? Support development:</p>
-            <script type="text/javascript"
-                    src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js"
-                    data-name="bmc-button"
-                    data-slug="K3QSoR2"
-                    data-color="#BD5FFF"
-                    data-emoji="☕"
-                    data-font="Cookie"
-                    data-text="Buy me a coffee"
-                    data-outline-color="#000000"
-                    data-font-color="#ffffff"
-                    data-coffee-color="#FFDD00">
-            </script>
+            <button type="submit" class="btn primary">Generate addon</button>
+            <a href="/html/direct-config.html" class="btn subtle">Use a playlist URL instead</a>
         </div>
     </form>
 
     <section class="info-panel">
-        <h3>Hints</h3>
+        <h3>Good to know</h3>
         <ul class="feature-list">
-            <li>JSON mode fetches live, VOD and (optional) panel EPG.</li>
-            <li>M3U mode parses the entire exported playlist client-side.</li>
-            <li>You can override the panel EPG with a custom XMLTV feed.</li>
-            <li>Series (shows) are supported in both modes (heuristic for M3U).</li>
+            <li>Big panels take 10-30 seconds to check. The first load in Stremio after a deploy or a long break can take a bit longer.</li>
+            <li>Channels and the guide refresh on their own. You only need to reinstall when you change a setting here.</li>
+            <li>Most accounts allow 1-2 streams at once. If a channel won't open, close the previous one and try again.</li>
         </ul>
     </section>
 </main>
 
 <footer class="site-footer">
-    <div class="inner">
-        <p>&copy; 2025 M3U/EPG Addon • Made with ❤️ by Inside4ndroid • Xtream Mode</p>
-    </div>
+    <p>M3U/EPG TV Addon · <span data-version></span></p>
 </footer>
 
 <div id="loaderOverlay" class="overlay hidden">
-    <div class="overlay-box">
+    <div class="overlay-box" role="dialog" aria-modal="true" aria-labelledby="loaderMessage">
         <header class="overlay-header">
-            <h2 id="loaderMessage">Starting…</h2>
-            <p class="overlay-sub" id="progressText">0%</p>
+            <div>
+                <h2 id="loaderMessage">Starting…</h2>
+                <p class="overlay-sub" id="progressText">0%</p>
+            </div>
+            <button type="button" id="overlayCloseBtn" class="icon-btn" aria-label="Close">&times;</button>
         </header>
         <div class="progress-track"><div id="progressBar" class="progress-fill" style="width:0%"></div></div>
+        <div id="manifestRow" class="manifest-row hidden">
+            <label for="manifestUrlField">Manifest URL</label>
+            <input type="text" id="manifestUrlField" readonly>
+        </div>
         <pre id="statusDetails" class="status-log" aria-live="polite"></pre>
         <div class="overlay-actions">
             <button id="openStremioBtn" class="btn success" disabled>Open in Stremio</button>
-            <button id="copyManifestBtn" class="btn secondary" disabled>Copy Manifest URL</button>
+            <button id="copyManifestBtn" class="btn secondary" disabled>Copy manifest URL</button>
         </div>
     </div>
 </div>

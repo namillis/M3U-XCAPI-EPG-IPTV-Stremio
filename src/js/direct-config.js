@@ -249,7 +249,7 @@
 
             config.instanceId = config.instanceId || uuid();
 
-            const { manifestUrl, stremioUrl } = buildUrls(config);
+            const { manifestUrl, stremioUrl } = await buildUrls(config);
             appendDetail('✔ Token built');
             appendDetail('Manifest URL: ' + manifestUrl);
             appendDetail('Stremio URL: ' + stremioUrl);
