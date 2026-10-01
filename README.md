@@ -109,6 +109,70 @@ Then open: `http://localhost:7000/`
 
 ---
 
+## ☁️ Free Hosting on Render
+
+[Render](https://render.com)'s free web service tier runs this addon at no cost and without a credit card. You get an `https://<name>.onrender.com` URL with HTTPS included, which Stremio requires for remote addons.
+
+### Deploy
+
+1. Fork this repo on GitHub.
+2. Sign up at [render.com](https://render.com) with your GitHub account.
+3. Click **New +** → **Web Service** and pick your fork.
+4. Use these settings:
+
+   | Setting | Value |
+   |---------|-------|
+   | Runtime | `Node` |
+   | Branch | `main` |
+   | Build Command | `npm install` |
+   | Start Command | `npm start` |
+   | Instance Type | `Free` |
+   | Health Check Path | `/health` (under **Advanced**) |
+
+5. Under **Advanced**, add environment variables:
+
+   | Variable | Value |
+   |----------|-------|
+   | `CONFIG_SECRET` | A long random string, e.g. from `openssl rand -hex 32`. Encrypts your credentials in the manifest URL. |
+   | `DEBUG_MODE` | `false` |
+   | `CACHE_ENABLED` | `true` |
+   | `PREFETCH_ENABLED` | `true` |
+
+   Don't set `PORT`. Render injects its own, and the server reads `process.env.PORT`.
+
+6. Click **Create Web Service**. When the logs show it's live, open `https://<name>.onrender.com/`, configure your source, and install the addon in Stremio.
+
+Render redeploys automatically whenever you push to your fork. To pull in upstream changes, use **Sync fork** on GitHub.
+
+### Keeping it awake (UptimeRobot or cron-job.org)
+
+A free Render service spins down after 15 minutes without incoming HTTP requests. The next request waits about a minute for it to start again, so Stremio shows empty or slow catalogs at first. Each spin-down also clears the in-memory cache, so the channel list and EPG are downloaded again from your provider on every wake.
+
+To prevent this, have a free external service request `/health` more often than every 15 minutes. `/health` returns a small JSON body and never contacts your IPTV provider, so the pings add no load there. Set up one of these (you only need one):
+
+**UptimeRobot** (recommended): free plan with 50 monitors, 5-minute checks, and an email alert if the addon goes down.
+1. Sign up at [uptimerobot.com](https://uptimerobot.com).
+2. Click **New monitor** and choose **HTTP(s)**.
+3. URL: `https://<name>.onrender.com/health`
+4. Interval: 5 minutes.
+
+**cron-job.org**: free and can run as often as every minute, but has no real alerting.
+1. Sign up at [cron-job.org](https://cron-job.org) and create a cronjob.
+2. URL: `https://<name>.onrender.com/health`
+3. Schedule: every 10 minutes.
+
+cron-job.org gives up on a request after 30 seconds. If a ping lands while the service is still waking, that run shows as failed. This is harmless, and the next run succeeds.
+
+### Render free tier notes
+
+- **Instance hours:** Render gives 750 free hours per workspace per month, shared by all free services. A month has 720-744 hours, so one service kept awake uses almost the whole pool. Keep only one free service awake, or they'll all be suspended until the next month.
+- **Don't ping `/robots.txt`:** while the service is asleep, Render answers that path itself. The check passes but the service never wakes.
+- **512 MB RAM:** very large playlists or EPGs can still run out of memory. If Render reports "Ran out of memory", enable **Live TV only** or use a smaller custom EPG.
+- **Datacenter IP blocks:** some IPTV providers block cloud IPs. If the config page can't load your playlist on Render but it loads at home, that's the likely cause, and every cloud host will behave the same way.
+- **Occasional cold starts:** deploys and Render's own restarts of free instances still cause a cold start now and then, even with a keep-alive.
+
+---
+
 ## 🔐 Configuration Tokens
 
 | Type | Format | Notes |
