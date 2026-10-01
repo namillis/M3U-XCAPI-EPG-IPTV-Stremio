@@ -40,9 +40,11 @@ async function fetchData(addonInstance) {
     const items = addonInstance.parseM3U(text);
 
     addonInstance.channels = items.filter((i) => i.type === "tv");
-    addonInstance.movies = items.filter((i) => i.type === "movie");
+    addonInstance.movies = config.liveOnly
+      ? []
+      : items.filter((i) => i.type === "movie");
 
-    if (config.includeSeries !== false) {
+    if (!config.liveOnly && config.includeSeries !== false) {
       const seriesCandidates = items.filter((i) => i.type === "series");
       // Reduce duplication by grouping by cleaned series name
       const seen = new Map();
@@ -71,21 +73,26 @@ async function fetchData(addonInstance) {
     // JSON API mode
     const base = `${xtreamUrl}/player_api.php?username=${encodeURIComponent(xtreamUsername)}&password=${encodeURIComponent(xtreamPassword)}`;
     // Fetch streams + category lists in parallel to map category_id -> category_name
+    const liveOnly = !!config.liveOnly;
     const [liveResp, vodResp, liveCatsResp, vodCatsResp] = await Promise.all([
       fetch(`${base}&action=get_live_streams`, { timeout: 30000 }),
-      fetch(`${base}&action=get_vod_streams`, { timeout: 30000 }),
+      liveOnly
+        ? null
+        : fetch(`${base}&action=get_vod_streams`, { timeout: 30000 }),
       fetch(`${base}&action=get_live_categories`, { timeout: 20000 }).catch(
         () => null,
       ),
-      fetch(`${base}&action=get_vod_categories`, { timeout: 20000 }).catch(
-        () => null,
-      ),
+      liveOnly
+        ? null
+        : fetch(`${base}&action=get_vod_categories`, { timeout: 20000 }).catch(
+            () => null,
+          ),
     ]);
 
     if (!liveResp.ok) throw new Error("Xtream live streams fetch failed");
-    if (!vodResp.ok) throw new Error("Xtream VOD streams fetch failed");
+    if (vodResp && !vodResp.ok) throw new Error("Xtream VOD streams fetch failed");
     const live = await liveResp.json();
-    const vod = await vodResp.json();
+    const vod = vodResp ? await vodResp.json() : [];
 
     let liveCatMap = {};
     let vodCatMap = {};
@@ -154,7 +161,7 @@ async function fetchData(addonInstance) {
       };
     });
 
-    if (config.includeSeries !== false) {
+    if (!liveOnly && config.includeSeries !== false) {
       try {
         const [seriesResp, seriesCatsResp] = await Promise.all([
           fetch(`${base}&action=get_series`, { timeout: 35000 }),
