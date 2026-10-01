@@ -126,6 +126,7 @@ async function fetchData(addonInstance) {
     addonInstance.channels = (Array.isArray(live) ? live : []).map((s) => {
       const cat =
         liveCatMap[s.category_id] || s.category_name || s.category_id || "Live";
+      const archiveDays = Number(s.tv_archive) === 1 ? Number(s.tv_archive_duration) || 1 : 0;
       return {
         id: `iptv_live_${s.stream_id}`,
         name: s.name,
@@ -134,6 +135,7 @@ async function fetchData(addonInstance) {
         logo: s.stream_icon,
         category: cat,
         epg_channel_id: s.epg_channel_id,
+        ...(archiveDays ? { archiveDays } : {}),
         attributes: {
           "tvg-logo": s.stream_icon,
           "tvg-id": s.epg_channel_id,
@@ -316,7 +318,110 @@ function cryptoHash(text) {
     .slice(0, 12);
 }
 
+function httpError(message, status) {
+  const e = new Error(message);
+  e.status = status;
+  return e;
+}
+
+function unixToIso(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? new Date(n * 1000).toISOString() : null;
+}
+
+async function fetchAccountInfo(xtreamUrl, username, password) {
+  const url =
+    `${xtreamUrl}/player_api.php?username=${encodeURIComponent(username)}` +
+    `&password=${encodeURIComponent(password)}`;
+  let resp;
+  try {
+    resp = await fetch(url, {
+      timeout: 12000,
+      headers: { "User-Agent": "Stremio M3U/EPG Addon (account)" },
+    });
+  } catch (e) {
+    throw httpError(`Panel unreachable: ${e.message}`, 502);
+  }
+  if (resp.status === 401 || resp.status === 403)
+    throw httpError("Panel rejected the login", 401);
+  if (!resp.ok) throw httpError(`Panel returned HTTP ${resp.status}`, 502);
+  let body;
+  try {
+    body = await resp.json();
+  } catch {
+    throw httpError("Panel did not return account info", 502);
+  }
+  const u = body && body.user_info;
+  if (!u || Number(u.auth) === 0) throw httpError("Panel rejected the login", 401);
+  const s = body.server_info || {};
+  const num = (v) => (v === undefined || v === null || v === "" ? null : Number(v));
+  return {
+    status: u.status || "Unknown",
+    expiresAt: unixToIso(u.exp_date),
+    createdAt: unixToIso(u.created_at),
+    activeConnections: num(u.active_cons),
+    maxConnections: num(u.max_connections),
+    isTrial: String(u.is_trial) === "1",
+    serverTimezone: s.timezone || null,
+  };
+}
+
+function decodeB64(value) {
+  if (!value) return "";
+  const raw = String(value);
+  if (raw.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) return raw;
+  const text = Buffer.from(raw, "base64").toString("utf8");
+  return text.includes("\uFFFD") ? raw : text;
+}
+
+function timeshiftStart(start) {
+  const m = String(start || "").match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}-${m[3]}` : null;
+}
+
+async function fetchCatchup(addonInstance, item, { maxEntries = 48 } = {}) {
+  const { xtreamUrl, xtreamUsername, xtreamPassword } = addonInstance.config;
+  const streamId = String(item.id).replace(/^iptv_live_/, "");
+  const url =
+    `${xtreamUrl}/player_api.php?username=${encodeURIComponent(xtreamUsername)}` +
+    `&password=${encodeURIComponent(xtreamPassword)}` +
+    `&action=get_simple_data_table&stream_id=${encodeURIComponent(streamId)}`;
+  const resp = await fetch(url, {
+    timeout: 8000,
+    headers: { "User-Agent": "Stremio M3U/EPG Addon (catchup)" },
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const body = await resp.json();
+  const listings = Array.isArray(body?.epg_listings) ? body.epg_listings : [];
+  const windowStart = Date.now() / 1000 - (item.archiveDays || 1) * 86400;
+
+  const entries = [];
+  for (const l of listings) {
+    if (Number(l.has_archive) !== 1 && Number(l.now_playing) !== 1) continue;
+    const startTs = Number(l.start_timestamp);
+    const stopTs = Number(l.stop_timestamp);
+    const startParam = timeshiftStart(l.start);
+    if (!startParam || !Number.isFinite(startTs) || !Number.isFinite(stopTs) || stopTs <= startTs) continue;
+    if (startTs < windowStart) continue;
+    const durationMin = Math.ceil((stopTs - startTs) / 60);
+    entries.push({
+      title: decodeB64(l.title) || "Programme",
+      start: String(l.start),
+      startTs,
+      stopTs,
+      nowPlaying: Number(l.now_playing) === 1,
+      url:
+        `${xtreamUrl}/timeshift/${xtreamUsername}/${xtreamPassword}/` +
+        `${durationMin}/${startParam}/${streamId}.ts`,
+    });
+  }
+  entries.sort((a, b) => b.startTs - a.startTs);
+  return entries.slice(0, maxEntries);
+}
+
 module.exports = {
   fetchData,
   fetchSeriesInfo,
+  fetchAccountInfo,
+  fetchCatchup,
 };

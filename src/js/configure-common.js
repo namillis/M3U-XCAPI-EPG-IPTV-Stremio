@@ -282,6 +282,7 @@
                 radio.dispatchEvent(new Event('change', { bubbles: true }));
             }
             setField('customEpgUrl', cfg.epgUrl);
+            setField('catchup', !!cfg.catchup);
         } else {
             setField('m3uUrl', cfg.m3uUrl);
             setField('epgUrl', cfg.epgUrl);
