@@ -210,7 +210,9 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) =>
   res.json({ status: "OK", timestamp: new Date().toISOString() }),
 );
-app.get("/favicon.ico", (req, res) => res.status(204).end());
+app.get("/favicon.ico", (req, res) =>
+  res.sendFile(path.join(staticDir, "img", "icon.png")),
+);
 
 app.get("/configure-direct", (req, res) => {
   const fileRoot = path.join(__dirname, "direct-config.html");
@@ -380,6 +382,8 @@ app.get("/:token/manifest.json", (req, res) => {
   // Build a full manifest from the interface's manifest (which has genres populated)
   const manifest = JSON.parse(JSON.stringify(iface.manifest));
   // Remove configurable/configurationRequired for installed addons
+  const proto = (req.get("x-forwarded-proto") || req.protocol).split(",")[0];
+  manifest.logo = `${proto}://${req.get("host")}/img/icon.png`;
   if (manifest.behaviorHints) {
     delete manifest.behaviorHints.configurationRequired;
     delete manifest.behaviorHints.configurable;
