@@ -18,6 +18,8 @@
     }
     const debugChk       = document.getElementById('debugMode');
     const liveOnlyChk    = document.getElementById('liveOnly');
+    const groupCatChk    = document.getElementById('groupCatalogs');
+    const groupFilterInp = document.getElementById('groupFilter');
 
     const {
         showOverlay,
@@ -225,6 +227,10 @@
                 debug: debug || undefined
             };
             if (liveOnlyChk && liveOnlyChk.checked) config.liveOnly = true;
+            if (groupCatChk && groupCatChk.checked) {
+                config.groupCatalogs = true;
+                if (groupFilterInp && groupFilterInp.value.trim()) config.groupFilter = groupFilterInp.value.trim();
+            }
             if (enableEpgFinal && epgUrl) config.epgUrl = epgUrl;
             if (isFinite(epgOffsetHours) && epgOffsetHours !== 0) config.epgOffsetHours = epgOffsetHours;
             if (tzInput && tzInput.value.trim()) config.epgTimezone = tzInput.value.trim();

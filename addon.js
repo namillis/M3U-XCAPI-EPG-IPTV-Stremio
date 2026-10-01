@@ -60,6 +60,7 @@ async function redisSetJSON(key, value, ttl) {
     } catch { /* ignore */ }
 }
 
+const GROUP_CATALOG_MAX = 100;
 const EPG_PAST_MS = 3 * 3600000;
 const EPG_FUTURE_MS = 36 * 3600000;
 const EPG_DESC_MAX = 400;
@@ -91,6 +92,8 @@ function createCacheKey(config) {
         epgOffsetHours: config.epgOffsetHours,
         epgTimezone: config.epgTimezone,
         epgLocalTimes: !!config.epgLocalTimes,
+        groupCatalogs: !!config.groupCatalogs,
+        groupFilter: config.groupFilter || '',
         includeSeries: config.includeSeries !== false, // default true
         liveOnly: !!config.liveOnly
     };
@@ -185,6 +188,42 @@ class M3UEPGAddon {
         this.log.debug('Saved data to cache');
     }
 
+    channelGroup(c) {
+        const g = c.category || c.attributes?.['group-title'];
+        return g ? String(g).trim() : '';
+    }
+
+    buildGroupCatalogs(tvCatalog) {
+        const catalogs = this.manifestRef.catalogs;
+        for (let i = catalogs.length - 1; i >= 0; i--) {
+            if (catalogs[i].id.startsWith('iptv_grp_')) catalogs.splice(i, 1);
+        }
+        this.groupCatalogMap = new Map();
+        if (!this.config.groupCatalogs) return;
+
+        const terms = String(this.config.groupFilter || '')
+            .split(',')
+            .map(t => t.trim().toLowerCase())
+            .filter(Boolean);
+        const ordered = [];
+        const seen = new Set();
+        for (const c of this.channels) {
+            const g = this.channelGroup(c);
+            if (!g || seen.has(g)) continue;
+            seen.add(g);
+            if (terms.length && !terms.some(t => g.toLowerCase().includes(t))) continue;
+            ordered.push(g);
+        }
+
+        const groupCatalogs = ordered.slice(0, GROUP_CATALOG_MAX).map(name => {
+            const id = 'iptv_grp_' + crypto.createHash('md5').update(name).digest('hex').slice(0, 12);
+            this.groupCatalogMap.set(id, name);
+            return { type: 'tv', id, name, extra: [{ name: 'search' }, { name: 'skip' }] };
+        });
+        catalogs.splice(catalogs.indexOf(tvCatalog) + 1, 0, ...groupCatalogs);
+        this.log.debug('Group catalogs built', { matched: ordered.length, added: groupCatalogs.length });
+    }
+
     buildGenresInManifest() {
         if (!this.manifestRef) return;
         const tvCatalog = this.manifestRef.catalogs.find(c => c.id === 'iptv_channels');
@@ -208,6 +247,7 @@ class M3UEPGAddon {
             ].sort((a, b) => a.localeCompare(b));
             if (!groups.includes('All Channels')) groups.unshift('All Channels');
             setGenresOnCatalog(tvCatalog, groups);
+            this.buildGroupCatalogs(tvCatalog);
         }
 
         if (movieCatalog) {
@@ -824,6 +864,9 @@ async function createAddon(config) {
                 let items = [];
                 if (args.type === 'tv' && args.id === 'iptv_channels') {
                     items = addonInstance.channels;
+                } else if (args.type === 'tv' && args.id.startsWith('iptv_grp_')) {
+                    const group = addonInstance.groupCatalogMap?.get(args.id);
+                    if (group) items = addonInstance.channels.filter(c => addonInstance.channelGroup(c) === group);
                 } else if (args.type === 'movie' && args.id === 'iptv_movies') {
                     items = addonInstance.movies;
                 } else if (args.type === 'series' && args.id === 'iptv_series') {

@@ -26,6 +26,8 @@
   }
   const debugChk = document.getElementById("debugMode");
   const liveOnlyChk = document.getElementById("liveOnly");
+  const groupCatChk = document.getElementById("groupCatalogs");
+  const groupFilterInp = document.getElementById("groupFilter");
   const customEpgGroup = document.getElementById("customEpgGroup");
   const customEpgUrlInp = document.getElementById("customEpgUrl");
   const xtreamUseM3UChk = document.getElementById("xtreamUseM3U");
@@ -372,6 +374,11 @@
         debug: debug || undefined,
       };
       if (liveOnly) config.liveOnly = true;
+      if (groupCatChk && groupCatChk.checked) {
+        config.groupCatalogs = true;
+        if (groupFilterInp && groupFilterInp.value.trim())
+          config.groupFilter = groupFilterInp.value.trim();
+      }
 
       if (xtreamUseM3UChk && xtreamUseM3UChk.checked) {
         config.xtreamUseM3U = true;
