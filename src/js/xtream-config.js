@@ -16,6 +16,7 @@
   const enableEpgChk = document.getElementById("enableEpg");
   const epgOffsetInput = document.getElementById("epgOffsetHours");
   const debugChk = document.getElementById("debugMode");
+  const liveOnlyChk = document.getElementById("liveOnly");
   const customEpgGroup = document.getElementById("customEpgGroup");
   const customEpgUrlInp = document.getElementById("customEpgUrl");
   const xtreamUseM3UChk = document.getElementById("xtreamUseM3U");
@@ -241,6 +242,7 @@
     appendDetail(`Debug logging: ${debug ? "enabled" : "disabled"}`);
 
     let enableEpgFinal = enableEpgInitial;
+    const liveOnly = !!(liveOnlyChk && liveOnlyChk.checked);
     try {
       let liveCount = 0;
       let vodCount = 0;
@@ -273,30 +275,34 @@
       liveCount = Array.isArray(liveList) ? liveList.length : 0;
       appendDetail(`✔ Live streams: ${liveCount.toLocaleString()}`);
 
-      setProgress(28, "Fetching VOD Streams");
-      let vodJsonText;
-      try {
-        vodJsonText = await robustFetch(
-          `${base}&action=get_vod_streams`,
-          "vod_streams",
-          true,
-        );
-      } catch (vErr) {
-        appendDetail(`⚠ VOD browser fetch failed: ${vErr.message}`);
-        vodJsonText = await robustFetch(
-          `${base}&action=get_vod_streams`,
-          "vod_streams",
-          false,
-        );
-      }
       let vodList = [];
-      try {
-        vodList = JSON.parse(vodJsonText);
-      } catch {
-        throw new Error("Failed to parse VOD streams JSON");
+      if (liveOnly) {
+        appendDetail("Live TV only: skipping VOD fetch");
+      } else {
+        setProgress(28, "Fetching VOD Streams");
+        let vodJsonText;
+        try {
+          vodJsonText = await robustFetch(
+            `${base}&action=get_vod_streams`,
+            "vod_streams",
+            true,
+          );
+        } catch (vErr) {
+          appendDetail(`⚠ VOD browser fetch failed: ${vErr.message}`);
+          vodJsonText = await robustFetch(
+            `${base}&action=get_vod_streams`,
+            "vod_streams",
+            false,
+          );
+        }
+        try {
+          vodList = JSON.parse(vodJsonText);
+        } catch {
+          throw new Error("Failed to parse VOD streams JSON");
+        }
+        vodCount = Array.isArray(vodList) ? vodList.length : 0;
+        appendDetail(`✔ VOD streams: ${vodCount.toLocaleString()}`);
       }
-      vodCount = Array.isArray(vodList) ? vodList.length : 0;
-      appendDetail(`✔ VOD streams: ${vodCount.toLocaleString()}`);
 
       if (Array.isArray(liveList)) {
         for (const l of liveList) {
@@ -356,6 +362,7 @@
         enableEpg: enableEpgFinal,
         debug: debug || undefined,
       };
+      if (liveOnly) config.liveOnly = true;
 
       if (xtreamUseM3UChk && xtreamUseM3UChk.checked) {
         config.xtreamUseM3U = true;

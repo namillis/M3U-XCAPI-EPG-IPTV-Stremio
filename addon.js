@@ -75,7 +75,8 @@ function createCacheKey(config) {
         xtreamUseM3U: !!config.xtreamUseM3U,
         xtreamOutput: config.xtreamOutput,
         epgOffsetHours: config.epgOffsetHours,
-        includeSeries: config.includeSeries !== false // default true
+        includeSeries: config.includeSeries !== false, // default true
+        liveOnly: !!config.liveOnly
     };
     return crypto.createHash('md5').update(stableStringify(minimal)).digest('hex');
 }
@@ -646,6 +647,11 @@ async function createAddon(config) {
             configurationRequired: false
         }
     };
+
+    if (config.liveOnly) {
+        manifest.types = ["tv"];
+        manifest.catalogs = manifest.catalogs.filter(c => c.type === 'tv');
+    }
 
     config.instanceId = config.instanceId ||
         (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(8).toString('hex'));

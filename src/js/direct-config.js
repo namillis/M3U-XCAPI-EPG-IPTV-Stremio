@@ -12,6 +12,7 @@
     const enableEpgChk   = document.getElementById('enableEpg');
     const epgOffsetInput = document.getElementById('epgOffsetHours');
     const debugChk       = document.getElementById('debugMode');
+    const liveOnlyChk    = document.getElementById('liveOnly');
 
     const {
         showOverlay,
@@ -218,6 +219,7 @@
                 enableEpg: enableEpgFinal,
                 debug: debug || undefined
             };
+            if (liveOnlyChk && liveOnlyChk.checked) config.liveOnly = true;
             if (enableEpgFinal && epgUrl) config.epgUrl = epgUrl;
             if (isFinite(epgOffsetHours) && epgOffsetHours !== 0) config.epgOffsetHours = epgOffsetHours;
 

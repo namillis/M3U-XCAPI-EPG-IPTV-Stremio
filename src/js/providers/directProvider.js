@@ -67,9 +67,9 @@ async function fetchData(addonInstance) {
 
     // Separate by type (already heuristically assigned in parseM3U)
     addonInstance.channels = items.filter(i => i.type === 'tv');
-    addonInstance.movies = items.filter(i => i.type === 'movie');
+    addonInstance.movies = config.liveOnly ? [] : items.filter(i => i.type === 'movie');
 
-    if (config.includeSeries !== false) {
+    if (!config.liveOnly && config.includeSeries !== false) {
         // Build episode grouping from items of type 'series'
         const episodeItems = items.filter(i => i.type === 'series');
         const seriesMap = new Map(); // baseName -> series meta
