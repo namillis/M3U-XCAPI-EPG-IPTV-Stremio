@@ -667,3 +667,7 @@ select:focus {
     0% { background-position: 0 0; }
     100% { background-position: 360px 0; }
 }
+.app-logo {
+  display: block;
+  margin: 0 0 .6rem;
+}
