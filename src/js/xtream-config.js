@@ -15,6 +15,15 @@
   const togglePwdBtn = document.getElementById("togglePwd");
   const enableEpgChk = document.getElementById("enableEpg");
   const epgOffsetInput = document.getElementById("epgOffsetHours");
+  const tzInput = document.getElementById("epgTimezone");
+  const localTimesChk = document.getElementById("epgLocalTimes");
+  if (tzInput && !tzInput.value) {
+    try {
+      tzInput.value = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    } catch {
+      /* ignore */
+    }
+  }
   const debugChk = document.getElementById("debugMode");
   const liveOnlyChk = document.getElementById("liveOnly");
   const customEpgGroup = document.getElementById("customEpgGroup");
@@ -381,6 +390,9 @@
       }
       if (isFinite(epgOffset) && epgOffset !== 0)
         config.epgOffsetHours = epgOffset;
+      if (tzInput && tzInput.value.trim())
+        config.epgTimezone = tzInput.value.trim();
+      if (localTimesChk && localTimesChk.checked) config.epgLocalTimes = true;
 
       config.prescan = {
         liveCount,

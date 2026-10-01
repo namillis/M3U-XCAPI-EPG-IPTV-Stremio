@@ -64,6 +64,16 @@ const EPG_PAST_MS = 3 * 3600000;
 const EPG_FUTURE_MS = 36 * 3600000;
 const EPG_DESC_MAX = 400;
 
+function validTimezone(tz) {
+    if (!tz || typeof tz !== 'string') return null;
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: tz });
+        return tz;
+    } catch {
+        return null;
+    }
+}
+
 function stableStringify(obj) {
     return JSON.stringify(obj, Object.keys(obj).sort());
 }
@@ -79,6 +89,8 @@ function createCacheKey(config) {
         xtreamUseM3U: !!config.xtreamUseM3U,
         xtreamOutput: config.xtreamOutput,
         epgOffsetHours: config.epgOffsetHours,
+        epgTimezone: config.epgTimezone,
+        epgLocalTimes: !!config.epgLocalTimes,
         includeSeries: config.includeSeries !== false, // default true
         liveOnly: !!config.liveOnly
     };
@@ -116,6 +128,15 @@ class M3UEPGAddon {
             this.config.epgOffsetHours = 0;
         if (typeof this.config.includeSeries === 'undefined')
             this.config.includeSeries = true;
+        this.timezone = validTimezone(this.config.epgTimezone);
+        this.tzOffsetCache = new Map();
+        if (this.timezone) {
+            this.tzParts = new Intl.DateTimeFormat('en-US', {
+                timeZone: this.timezone, hourCycle: 'h23',
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+        }
 
         this.log.debug('Addon instance created', {
             provider: this.providerName,
@@ -388,6 +409,31 @@ class M3UEPGAddon {
         });
     }
 
+    tzOffsetMs(utcMs) {
+        const bucket = Math.floor(utcMs / 900000);
+        let off = this.tzOffsetCache.get(bucket);
+        if (off === undefined) {
+            const p = {};
+            for (const { type, value } of this.tzParts.formatToParts(new Date(utcMs))) p[type] = value;
+            off = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(utcMs / 1000) * 1000;
+            this.tzOffsetCache.set(bucket, off);
+        }
+        return off;
+    }
+
+    zonedTimeToDate(year, month, day, hour, min, sec) {
+        const wall = Date.UTC(year, month, day, hour, min, sec);
+        let utc = wall - this.tzOffsetMs(wall);
+        utc = wall - this.tzOffsetMs(utc);
+        return new Date(utc);
+    }
+
+    formatTime(date) {
+        const opts = { hour: '2-digit', minute: '2-digit' };
+        if (this.timezone) opts.timeZone = this.timezone;
+        return date.toLocaleTimeString([], opts);
+    }
+
     parseEPGTime(s) {
         if (!s) return new Date();
         const m = s.match(/^(\d{14})(?:\s*([+\-]\d{4}))?/);
@@ -401,7 +447,10 @@ class M3UEPGAddon {
             const min = parseInt(base.slice(10, 12), 10);
             const sec = parseInt(base.slice(12, 14), 10);
             let date;
-            if (tz) {
+            const useZone = this.timezone && (!tz || this.config.epgLocalTimes);
+            if (useZone) {
+                date = this.zonedTimeToDate(year, month, day, hour, min, sec);
+            } else if (tz) {
                 const iso = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}T${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}${tz}`;
                 const parsed = new Date(iso);
                 if (!isNaN(parsed.getTime())) date = parsed;
@@ -647,15 +696,15 @@ class M3UEPGAddon {
             const upcoming = this.getUpcomingPrograms(epgId, 3);
             let description = `📺 CHANNEL: ${item.name}`;
             if (current) {
-                const start = current.startTime?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
-                const end = current.stopTime?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
+                const start = (current.startTime ? this.formatTime(current.startTime) : '') || '';
+                const end = (current.stopTime ? this.formatTime(current.stopTime) : '') || '';
                 description += `\n\n📡 NOW: ${current.title}${start && end ? ` (${start}-${end})` : ''}`;
                 if (current.description) description += `\n\n${current.description}`;
             }
             if (upcoming.length) {
                 description += '\n\n📅 UPCOMING:\n';
                 for (const p of upcoming) {
-                    description += `${p.startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${p.title}\n`;
+                    description += `${this.formatTime(p.startTime)} - ${p.title}\n`;
                 }
             }
             return {
