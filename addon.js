@@ -225,7 +225,7 @@ class M3UEPGAddon {
     }
 
     buildGenresInManifest() {
-        if (!this.manifestRef) return;
+        if (!this.manifestRef || !this.manifestReady) return;
         const tvCatalog = this.manifestRef.catalogs.find(c => c.id === 'iptv_channels');
         const movieCatalog = this.manifestRef.catalogs.find(c => c.id === 'iptv_movies');
         const seriesCatalog = this.manifestRef.catalogs.find(c => c.id === 'iptv_series');
@@ -234,6 +234,8 @@ class M3UEPGAddon {
         function setGenresOnCatalog(catalog, groups) {
             if (!catalog) return;
             catalog.genres = groups;
+            const genreExtra = Array.isArray(catalog.extra) && catalog.extra.find(e => e.name === 'genre');
+            if (genreExtra && groups.length) genreExtra.options = [...groups];
         }
 
         if (tvCatalog) {
@@ -849,11 +851,8 @@ async function createAddon(config) {
         } catch (e) {
             console.error('[ADDON] Initial update failed:', e);
         }
-        addonInstance.buildGenresInManifest();
         
-        // Pass the fully populated manifest to builder
-        // IMPORTANT: We must ensure 'manifest' object has 'catalogs[].genres' populated BEFORE creating builder
-        const builder = new addonBuilder(manifest); 
+        const builder = new addonBuilder(manifest);
 
         builder.defineCatalogHandler(async (args) => {
             const start = Date.now();
@@ -982,6 +981,8 @@ async function createAddon(config) {
         });
 
         const iface = builder.getInterface();
+        addonInstance.manifestReady = true;
+        addonInstance.buildGenresInManifest();
 
         // POST-BUILD: Inject 'options' into each catalog's genre extra entry.
         // This MUST happen after getInterface() because the SDK linter would reject
