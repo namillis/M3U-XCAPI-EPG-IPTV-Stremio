@@ -41,7 +41,7 @@
 
     // Polling / timing constants
     const POLL_INTERVAL_MS     = 1500;
-    const MAX_WAIT_MS          = 90000;
+    const MAX_WAIT_MS          = 300000;
     const PROGRESS_ESTIMATE_MS = 45000;
 
     let pollTimer      = null;
@@ -161,7 +161,7 @@
         if (ready) return;
         if (elapsed > MAX_WAIT_MS) {
             loaderMessage.textContent = 'Taking longer than expected.';
-            appendDetail('Timeout waiting for manifest. You may retry or open later.');
+            appendDetail('Timeout waiting for manifest. The server may still be building it: try Install in a minute.');
             setProgress(100, 'Timeout');
             // Still allow user to copy / open after timeout
             enableActionButtons();
