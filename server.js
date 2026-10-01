@@ -252,6 +252,23 @@ app.get("/:token/configure", (req, res) => {
   return res.redirect(`/${encodeURIComponent(token)}/configure-${provider}`);
 });
 
+app.get("/:token/configure-data.json", (req, res) => {
+  const { token } = req.params;
+  if (!isConfigToken(token))
+    return res.status(400).json({ error: "Invalid configuration" });
+  let cfg;
+  try {
+    cfg = maybeDecryptConfig(token);
+  } catch {
+    return res.status(400).json({ error: "Invalid configuration" });
+  }
+  if (!cfg || typeof cfg !== "object")
+    return res.status(400).json({ error: "Invalid configuration" });
+  const { prescan, instanceId, ...editable } = cfg;
+  res.setHeader("Cache-Control", "no-store");
+  res.json(editable);
+});
+
 app.get("/:token/configure-direct", (req, res) => {
   if (!isConfigToken(req.params.token))
     return res.status(400).json({ error: "Invalid token" });
@@ -386,7 +403,7 @@ app.get("/:token/manifest.json", (req, res) => {
   manifest.logo = `${proto}://${req.get("host")}/img/icon.png`;
   if (manifest.behaviorHints) {
     delete manifest.behaviorHints.configurationRequired;
-    delete manifest.behaviorHints.configurable;
+    manifest.behaviorHints.configurable = true;
   }
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Access-Control-Allow-Origin", "*");
