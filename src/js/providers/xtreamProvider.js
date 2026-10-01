@@ -223,10 +223,9 @@ async function fetchData(addonInstance) {
       : `${xtreamUrl}/xmltv.php?username=${encodeURIComponent(xtreamUsername)}&password=${encodeURIComponent(xtreamPassword)}`;
 
     try {
-      const epgResp = await fetch(epgSource, { timeout: 45000 });
+      const epgResp = await fetch(epgSource, { timeout: 120000 });
       if (epgResp.ok) {
-        const epgContent = await epgResp.text();
-        addonInstance.epgData = await addonInstance.parseEPG(epgContent);
+        addonInstance.epgData = await addonInstance.parseEPGStream(epgResp.body);
       }
     } catch {
       // Ignore EPG errors
