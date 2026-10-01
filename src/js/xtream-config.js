@@ -139,7 +139,7 @@
     appendDetail(
       `✔ (Server) ${purpose} ${payload.bytes.toLocaleString()} bytes${payload.truncated ? " (truncated)" : ""}`,
     );
-    if (payload.truncated) {
+    if (payload.truncated && purpose !== "epg") {
       throw new Error(
         "Prefetch truncated: increase server PREFETCH_MAX_BYTES or reduce dataset (e.g. fetch categories incrementally)",
       );
