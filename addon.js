@@ -61,6 +61,11 @@ async function redisSetJSON(key, value, ttl) {
 }
 
 const GROUP_CATALOG_MAX = 100;
+const SEPARATOR_RE = /^\s*[#=*\-_~|]{3,}.*[#=*\-_~|]{3,}\s*$/;
+
+function isSeparator(item) {
+    return !!item && typeof item.name === 'string' && SEPARATOR_RE.test(item.name);
+}
 const EPG_PAST_MS = 3 * 3600000;
 const EPG_FUTURE_MS = 36 * 3600000;
 const EPG_DESC_MAX = 400;
@@ -576,6 +581,9 @@ class M3UEPGAddon {
             const start = Date.now();
             const providerModule = require(`./src/js/providers/${this.providerName}Provider.js`);
             await providerModule.fetchData(this);
+            this.channels = this.channels.filter(i => !isSeparator(i));
+            this.movies = this.movies.filter(i => !isSeparator(i));
+            this.series = this.series.filter(i => !isSeparator(i));
             this.lastUpdate = Date.now();
             if (CACHE_ENABLED) await this.saveToCache();
             this.buildGenresInManifest();
