@@ -200,6 +200,61 @@
         return { token, manifestUrl, stremioUrl };
     }
 
+    /* -------- Reconfigure prefill -------- */
+
+    function reconfigureToken() {
+        const m = window.location.pathname.match(/^\/([^/]+)\/configure-(direct|xtream)\/?$/);
+        return m ? m[1] : null;
+    }
+
+    function setField(id, value) {
+        const el = document.getElementById(id);
+        if (!el || value === undefined || value === null) return;
+        if (el.type === 'checkbox') el.checked = !!value;
+        else el.value = String(value);
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    async function prefillIfReconfigure(mode) {
+        const token = reconfigureToken();
+        if (!token) return null;
+        let cfg;
+        try {
+            const res = await fetch(`/${token}/configure-data.json`, { cache: 'no-store' });
+            if (!res.ok) return null;
+            cfg = await res.json();
+        } catch {
+            return null;
+        }
+        if (mode === 'xtream') {
+            setField('xtreamUrl', cfg.xtreamUrl);
+            setField('xtreamUsername', cfg.xtreamUsername);
+            setField('xtreamPassword', cfg.xtreamPassword);
+            setField('xtreamUseM3U', !!cfg.xtreamUseM3U);
+            setField('xtreamOutput', cfg.xtreamOutput);
+            const epgMode = cfg.epgUrl ? 'custom' : 'xtream';
+            const radio = document.querySelector(`input[name="epgMode"][value="${epgMode}"]`);
+            if (radio) {
+                radio.checked = true;
+                radio.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            setField('customEpgUrl', cfg.epgUrl);
+        } else {
+            setField('m3uUrl', cfg.m3uUrl);
+            setField('epgUrl', cfg.epgUrl);
+        }
+        setField('enableEpg', cfg.enableEpg !== false);
+        setField('epgOffsetHours', cfg.epgOffsetHours || '');
+        if (cfg.epgTimezone) setField('epgTimezone', cfg.epgTimezone);
+        setField('epgLocalTimes', !!cfg.epgLocalTimes);
+        setField('liveOnly', !!cfg.liveOnly);
+        setField('groupCatalogs', !!cfg.groupCatalogs);
+        setField('groupFilter', cfg.groupFilter || '');
+        setField('debugMode', !!cfg.debug);
+        return cfg;
+    }
+
     /* -------- Public API -------- */
 
     window.ConfigureCommon = {
@@ -207,6 +262,7 @@
         hideOverlay,
         startPolling,
         buildUrls,
+        prefillIfReconfigure,
         overlaySetMessage(msg) { loaderMessage.textContent = msg; },
         setProgress,
         appendDetail,

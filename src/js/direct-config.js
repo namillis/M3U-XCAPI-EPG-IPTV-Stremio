@@ -36,6 +36,9 @@
         return;
     }
 
+    if (typeof window.ConfigureCommon.prefillIfReconfigure === 'function')
+        window.ConfigureCommon.prefillIfReconfigure('direct');
+
     function validateUrl(u) {
         try {
             const x = new URL(u);
