@@ -100,7 +100,8 @@
     }
 
     function setProgress(pct, label) {
-        if (progressBar) progressBar.style.width = Math.min(100, pct) + '%';
+        pct = Math.max(0, Math.min(100, pct));
+        if (progressBar) progressBar.style.width = pct + '%';
         if (progressText) progressText.textContent = `${Math.round(pct)}%`;
         if (label) loaderMessage.textContent = label;
     }
@@ -129,9 +130,10 @@
 
         const elapsed = Date.now() - startTime;
 
-        // Synthetic progress up to baseline + 95%
-        if (progressBar && parseFloat(progressBar.style.width) < baselinePct + 95) {
-            const synthetic = baselinePct + Math.min(95, (elapsed / PROGRESS_ESTIMATE_MS) * 95);
+        // Synthetic progress: eases toward 99% and only reaches 100% when the manifest is ready
+        if (progressBar) {
+            const span = Math.max(0, 99 - baselinePct);
+            const synthetic = baselinePct + span * (1 - Math.exp(-elapsed / PROGRESS_ESTIMATE_MS));
             setProgress(synthetic, progressMessage(elapsed));
         }
 
