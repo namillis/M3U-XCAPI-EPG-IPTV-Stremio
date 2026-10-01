@@ -433,7 +433,7 @@ Cache key = `md5` of normalized config subset.
 - [ ] Multi-EPG merge & channel mapping UI
 - [ ] Webhook or schedule-based background refresh
 - [ ] Token revocation list
-- [ ] Light theme toggle + user theme persistence
+- [ ] Dark theme toggle + user theme persistence
 - [ ] Add channel favorites (local storage layer)
 
 Want to help? See **Contributing** below.
@@ -579,16 +579,14 @@ Add new provider:
 
 ## 🌈 Theming
 
-Current UI theme mimics Stremio’s dark violet aesthetic:
-- Accent gradient: `#7043ff → #c58cff`
-- Panels: layered deep navy/indigo
-- Accessible contrast for logs/forms
-- Responsive overlay with progress stripes
+The UI uses a "Playful Geometric" look:
+- Cream paper background with a dot grid, plus confetti shapes (circles, triangles, squiggles)
+- Violet `#8B5CF6` for main actions, with pink `#F472B6`, amber `#FBBF24` and mint `#34D399` as accents
+- Hard offset shadows (no blur), 2px dark borders, pill buttons and sticker-style cards
+- Fonts: Outfit for headings, Plus Jakarta Sans for body text (Google Fonts)
+- All colours and shadows are CSS variables at the top of `src/css/styles.css`
 
-Feel free to PR:
-- Alternate light mode
-- High contrast accessibility mode
-- User theme selector (localStorage)
+Animations are turned off for anyone with "reduce motion" set in their OS.
 
 ---
 
