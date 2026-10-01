@@ -11,6 +11,11 @@
     const epgInput       = document.getElementById('epgUrl');
     const enableEpgChk   = document.getElementById('enableEpg');
     const epgOffsetInput = document.getElementById('epgOffsetHours');
+    const tzInput        = document.getElementById('epgTimezone');
+    const localTimesChk  = document.getElementById('epgLocalTimes');
+    if (tzInput && !tzInput.value) {
+        try { tzInput.value = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { /* ignore */ }
+    }
     const debugChk       = document.getElementById('debugMode');
     const liveOnlyChk    = document.getElementById('liveOnly');
 
@@ -222,6 +227,8 @@
             if (liveOnlyChk && liveOnlyChk.checked) config.liveOnly = true;
             if (enableEpgFinal && epgUrl) config.epgUrl = epgUrl;
             if (isFinite(epgOffsetHours) && epgOffsetHours !== 0) config.epgOffsetHours = epgOffsetHours;
+            if (tzInput && tzInput.value.trim()) config.epgTimezone = tzInput.value.trim();
+            if (localTimesChk && localTimesChk.checked) config.epgLocalTimes = true;
 
             config.prescan = {
                 entries: items.length,
