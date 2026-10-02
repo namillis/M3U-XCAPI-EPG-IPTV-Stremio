@@ -6,6 +6,7 @@ const { addonBuilder } = require("stremio-addon-sdk");
 const crypto = require("crypto");
 const LRUCache = require("./lruCache");
 const { parseXmltvStream } = require("./epgParser");
+const { buildEventIndex, currentEvents, eventState } = require("./liveEvents");
 const { version: ADDON_VERSION } = require("./package.json");
 const fetch = require('node-fetch');
 const zlib = require('zlib');
@@ -173,6 +174,8 @@ const EPG_FUTURE_MS = 36 * 3600000;
 const EPG_REFRESH_MS = parseInt(process.env.EPG_REFRESH_MS || (3600 * 1000).toString(), 10);
 const EPG_CACHE_PREFIX = 'addon:epg:v2:';
 const CATCHUP_TTL_MS = 5 * 60 * 1000;
+const EVENT_INDEX_TTL_MS = 10 * 60 * 1000;
+const LIVE_NOW_CACHE_S = 60;
 const CATCHUP_CACHE_MAX = 200;
 const EPG_DESC_MAX = 400;
 
@@ -386,6 +389,75 @@ class M3UEPGAddon {
         this.log.debug('Catch-up catalog built', { channels: channels.length, groups: groups.length });
     }
 
+    liveEventIndex() {
+        const now = Date.now();
+        if (!this.eventIndex || this.eventIndexFor !== this.channels || now - this.eventIndexAt > EVENT_INDEX_TTL_MS) {
+            this.eventIndex = buildEventIndex(this.channels, { now, groupOf: c => this.channelGroup(c) });
+            this.eventIndexFor = this.channels;
+            this.eventIndexAt = now;
+        }
+        return this.eventIndex;
+    }
+
+    buildLiveNowCatalog(tvCatalog) {
+        const catalogs = this.manifestRef.catalogs;
+        const existing = catalogs.findIndex(c => c.id === 'iptv_live_now');
+        if (existing !== -1) catalogs.splice(existing, 1);
+        const index = this.liveEventIndex();
+        if (!index.size) return;
+        const sources = [...new Set([...index.values()].flatMap(e => e.sources))].sort((a, b) => a.localeCompare(b));
+        catalogs.splice(catalogs.indexOf(tvCatalog), 0, {
+            type: 'tv',
+            id: 'iptv_live_now',
+            name: 'Live Now',
+            extra: [{ name: 'genre', options: sources }, { name: 'search' }, { name: 'skip' }],
+            genres: sources
+        });
+        this.log.debug('Live Now catalog built', { events: index.size, sources: sources.length });
+    }
+
+    formatEventTime(ms, now = Date.now()) {
+        const opts = { timeZone: this.timezone || 'America/New_York', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' };
+        if (Math.abs(ms - now) > 12 * 3600000) opts.weekday = 'short';
+        return new Date(ms).toLocaleString('en-US', opts);
+    }
+
+    eventMetaPreview(e, now = Date.now()) {
+        const when = this.formatEventTime(e.start, now);
+        const live = eventState(e, now) === 'live';
+        const logo = e.channels.find(c => c.logo)?.logo;
+        const count = e.channels.length;
+        return {
+            id: e.id,
+            type: 'tv',
+            name: e.title,
+            poster: logo || `https://placehold.co/480x270/333333/FFFFFF/png?text=${encodeURIComponent(e.title)}`,
+            posterShape: 'landscape',
+            description: `${live ? `🔴 Live now · started ${when}` : `⏰ Starts ${when}`}\n${e.sources.join(' · ')} · ${count} channel${count === 1 ? '' : 's'}`,
+            genres: e.sources,
+            runtime: live ? 'Live' : when
+        };
+    }
+
+    getEventMeta(id) {
+        const e = this.liveEventIndex().get(id);
+        if (!e) return null;
+        const meta = this.eventMetaPreview(e);
+        meta.description += '\n\n' + e.channels.map(c => `• ${c.slot}`).join('\n');
+        return meta;
+    }
+
+    getEventStreams(id) {
+        const e = this.liveEventIndex().get(id);
+        if (!e) return [];
+        const streams = [];
+        for (const ch of e.channels) {
+            const stream = this.getStream(ch.id);
+            if (stream) streams.push({ ...stream, name: ch.source, title: ch.slot });
+        }
+        return streams;
+    }
+
     buildGenresInManifest() {
         if (!this.manifestRef || !this.manifestReady) return;
         const tvCatalog = this.manifestRef.catalogs.find(c => c.id === 'iptv_channels');
@@ -413,6 +485,7 @@ class M3UEPGAddon {
             setGenresOnCatalog(tvCatalog, groups);
             this.buildGroupCatalogs(tvCatalog);
             this.buildCatchupCatalog(tvCatalog);
+            this.buildLiveNowCatalog(tvCatalog);
         }
 
         if (movieCatalog) {
@@ -1088,6 +1161,20 @@ async function createAddon(config) {
                 // Background update
                 addonInstance.updateData().catch(() => { });
 
+                if (args.type === 'tv' && args.id === 'iptv_live_now') {
+                    const extra = args.extra || {};
+                    const now = Date.now();
+                    const q = extra.search ? extra.search.toLowerCase() : '';
+                    let events = currentEvents(addonInstance.liveEventIndex(), now, {
+                        source: extra.genre || null,
+                        includeAssumed: !!q
+                    });
+                    if (q) events = events.filter(e => e.title.toLowerCase().includes(q));
+                    const skip = extra.skip ? parseInt(extra.skip) : 0;
+                    const metas = events.slice(skip, skip + 100).map(e => addonInstance.eventMetaPreview(e, now));
+                    return { metas, cacheMaxAge: LIVE_NOW_CACHE_S };
+                }
+
                 let items = [];
                 if (args.type === 'tv' && args.id === 'iptv_channels') {
                     items = addonInstance.channels;
@@ -1145,6 +1232,9 @@ async function createAddon(config) {
 
         builder.defineStreamHandler(async ({ type, id }) => {
             try {
+                if (id.startsWith('iptv_ev_')) {
+                    return { streams: addonInstance.getEventStreams(id) };
+                }
                 if (id.startsWith('iptv_series_ep_')) {
                     const stream = addonInstance.getStream(id);
                     if (!stream) return { streams: [] };
@@ -1170,6 +1260,9 @@ async function createAddon(config) {
             try {
                 if (addonInstance.config.debug) {
                     console.log('[DEBUG] Meta handler called', { type, id, seriesCount: addonInstance.series.length });
+                }
+                if (id.startsWith('iptv_ev_')) {
+                    return { meta: addonInstance.getEventMeta(id) };
                 }
                 if (type === 'series' || id.startsWith('iptv_series_')) {
                     const meta = await addonInstance.getDetailedMetaAsync(id, 'series');
