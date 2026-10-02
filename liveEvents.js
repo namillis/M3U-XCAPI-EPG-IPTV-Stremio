@@ -299,6 +299,7 @@ function annotateWithSchedule(byKey, games, now) {
         const g = findGame(e, games);
         if (!g) continue;
         e.sport = g.sport;
+        e.game = g;
         e.status = g.state;
         e.statusDetail = g.detail;
         if (g.state === 'post') e.final = true;
@@ -410,9 +411,222 @@ function addGuideEvents(byKey, slotEvents, epgData, channelsByEpgId, groupOf, no
     for (const e of byKey.values()) {
         if (!e.brands) continue;
         e.network = topBrand(e.brands) || e.network;
-        if (e.baseName) e.title = `${e.baseName} · ${e.network}`;
+        if (e.baseName) {
+            e.title = `${e.baseName} · ${e.network}`;
+            e.programme = e.baseName;
+        }
         delete e.brands;
         delete e.baseName;
+    }
+}
+
+const BROADCAST_NETWORKS = [
+    { names: ['ESPN'], re: /^ESPN(?: 1)?$/ },
+    { names: ['ESPN2'], re: /^ESPN ?2$/ },
+    { names: ['ESPNU'], re: /^ESPN ?U(?: COLLEGE SPORTS)?$/ },
+    { names: ['ESPNEWS', 'ESPN News'], re: /^ESPN ?NEWS$/ },
+    { names: ['ESPN Deportes'], re: /^ESPN DEPORTES$/ },
+    { names: ['ACC Network', 'ACCN'], re: /^(?:ESPN )?ACC NETWORK$/ },
+    { names: ['SEC Network', 'SECN'], re: /^(?:ESPN )?SEC NETWORK$/ },
+    { names: ['BTN', 'Big Ten Network'], re: /^(?:BTN|BIG TEN NETWORK)$/ },
+    { names: ['CBSSN', 'CBS Sports Network'], re: /^CBS SPORTS NETWORK$/ },
+    { names: ['CBS Sports Golazo', 'Golazo'], re: /^CBS SPORTS GOLAZO(?: NETWORK)?$/ },
+    { names: ['FS1'], re: /^(?:FS1|FOX SPORTS 1)$/ },
+    { names: ['FS2'], re: /^(?:FS2|FOX SPORTS 2)$/ },
+    { names: ['TNT'], re: /^TNT(?: EAST| WEST)?$/ },
+    { names: ['TBS'], re: /^TBS(?: EAST| WEST)?$/ },
+    { names: ['truTV'], re: /^TRU ?TV(?: EAST| WEST)?$/ },
+    { names: ['USA Net', 'USA Network'], re: /^USA NETWORK(?: EAST| WEST)?$/ },
+    { names: ['NFL Net', 'NFL Network'], re: /^NFL NETWORK$/ },
+    { names: ['NHL Net', 'NHL Network'], re: /^NHL NETWORK$/ },
+    { names: ['MLB Net', 'MLBN', 'MLB Network'], re: /^MLB NETWORK$/ },
+    { names: ['NBA TV'], re: /^NBA TV$/ },
+    { names: ['NESN'], re: /^NESN(?: BOSTON)?$/ },
+    { names: ['MSG'], re: /^MSG$/ },
+    { names: ['MSGSN', 'MSG+'], re: /^MSG (?:PLUS|2)$/ },
+    { names: ['SNY'], re: /^(?:SNY|SPORTSNET NEW YORK)$/ },
+    { names: ['YES'], re: /^YES(?: NETWORK)?$/ },
+    { names: ['MNMT', 'Monumental Sports Network'], re: /^MONUMENTAL SPORTS NETWORK$/ },
+    { names: ['Marquee', 'MARQ'], re: /^MARQUEE SPORTS NETWORK$/ },
+    { names: ['NBC Sports Phil', 'NBCSP'], re: /^NBC SPORTS PHILADELPHIA$/ },
+    { names: ['NBC Sports BA', 'NBCSBA'], re: /^NBC SPORTS BAY AREA$/ },
+    { names: ['NBC Sports CA', 'NBCSCA'], re: /^NBC SPORTS CALIFORNIA$/ },
+    { names: ['NBC Sports Boston', 'NBCSB'], re: /^NBC SPORTS BOSTON$/ },
+    { names: ['CHSN'], re: /^CHICAGO SPORTS NETWORK$/ },
+    { names: ['Altitude Sports', 'ALT'], re: /^ALTITUDE SPORTS$/ },
+    { names: ['SCHN', 'Space City Home Network'], re: /^SPACE CITY HOME NETWORK$/ },
+    { names: ['SportsNet LA', 'SNLA'], re: /^SPECTRUM SPORTSNET LA$/ },
+    { names: ['ABC'], re: /^ABC(?: \d.*)?$/, broadcast: true, national: /^ABC$/ },
+    { names: ['CBS'], re: /^CBS(?: \d.*)?$/, broadcast: true, national: /^CBS$/ },
+    { names: ['FOX'], re: /^FOX(?: \d.*)?$/, broadcast: true, national: /^FOX$/ },
+    { names: ['NBC'], re: /^NBC(?: \d.*)?$/, broadcast: true, national: /^NBC$/ },
+    { names: ['CW'], re: /^CW(?: \d.*)?$/, broadcast: true, national: /^CW$/ }
+];
+const NETWORK_BY_NAME = new Map();
+for (const n of BROADCAST_NETWORKS) for (const name of n.names) NETWORK_BY_NAME.set(name.toLowerCase().replace(/[^a-z0-9+]/g, ''), n);
+const US_CHANNEL_RE = /^\s*US\s*-\s*/;
+const MIRROR_RE = /^NCAAF \d+ : (.+)$/;
+const REGIONAL_WINDOW_MS = 3 * 3600000;
+const GENERIC_MATCH_MS = 20 * 60000;
+const SCHEDULE_BEFORE_MS = 6 * 3600000;
+const SPORT_TITLE_WORDS = [
+    [/football|nfl/i, /football|nfl/i],
+    [/hockey|nhl/i, /hockey|nhl/i],
+    [/basketball|nba|wnba/i, /basketball|baloncesto|nba|wnba/i],
+    [/baseball|mlb/i, /baseball|b[eé]isbol|mlb/i],
+    [/volleyball/i, /volleyball/i],
+    [/lacrosse/i, /lacrosse/i],
+    [/soccer|league|liga|bundesliga|ligue|serie|mls|nwsl|championship/i, /soccer|f[uú]tbol|football|league|liga|mls|nwsl/i]
+];
+
+function networkFor(espnName) {
+    return NETWORK_BY_NAME.get(String(espnName).toLowerCase().replace(/[^a-z0-9+]/g, '')) || null;
+}
+
+function sportCompatible(sport, title) {
+    for (const [s, t] of SPORT_TITLE_WORDS) if (s.test(sport)) return t.test(title);
+    return false;
+}
+
+function buildNetworkIndex(channels, groupOf) {
+    const index = new Map();
+    const slot = (n) => {
+        if (!index.has(n)) index.set(n, { all: [], national: [], mirrors: [] });
+        return index.get(n);
+    };
+    for (const c of channels) {
+        if (!c || c.type !== 'tv' || !US_CHANNEL_RE.test(c.name || '')) continue;
+        const name = networkName(c.name).toUpperCase();
+        const link = { id: c.id, slot: (c.name || '').trim(), source: sourceLabel(groupOf(c)), logo: c.logo || c.attributes?.['tvg-logo'] || null };
+        const mirror = name.match(MIRROR_RE);
+        if (mirror) {
+            const n = networkFor(mirror[1]);
+            if (n) slot(n).mirrors.push(link);
+            continue;
+        }
+        for (const n of BROADCAST_NETWORKS) {
+            if (!n.re.test(name)) continue;
+            slot(n).all.push(link);
+            if (n.national && n.national.test(name)) slot(n).national.push(link);
+            break;
+        }
+    }
+    return index;
+}
+
+function isRegional(game, network, games) {
+    if (!network.broadcast) return false;
+    return games.some(o => o !== game && Math.abs(o.start - game.start) < REGIONAL_WINDOW_MS &&
+        o.networks.some(name => networkFor(name) === network));
+}
+
+function addLinks(target, links) {
+    for (const l of links) {
+        if (target.channels.some(c => c.id === l.id)) continue;
+        target.channels.push(l);
+        if (!target.sources.includes(l.source)) target.sources.push(l.source);
+    }
+}
+
+function applyGame(e, g, now) {
+    e.sport = g.sport;
+    e.status = g.state;
+    e.statusDetail = g.detail;
+    if (g.state === 'in') e.end = Math.max(e.end, now + IN_PROGRESS_GRACE_MS);
+    if (isBareMatchup(e.title)) e.title = g.label;
+}
+
+const LEADING_SPORT_RE = /^(?:(?:men'?s|women'?s|mens|womens)\s+)?(?:college\s+)?(?:football|soccer|field hockey|hockey|volleyball|basketball|baseball|softball|lacrosse)\s+/i;
+
+function isBareMatchup(title) {
+    const rest = String(title).replace(LEADING_SPORT_RE, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const m = matchupOf(rest);
+    return !!m && m.label.replace(/\s+/g, ' ').toLowerCase() === rest.replace(/\s+/g, ' ').toLowerCase();
+}
+
+function channelNetwork(slotName) {
+    if (!US_CHANNEL_RE.test(slotName)) return null;
+    const name = networkName(slotName).toUpperCase();
+    const mirror = name.match(MIRROR_RE);
+    if (mirror) return networkFor(mirror[1]);
+    return BROADCAST_NETWORKS.find(n => n.re.test(name)) || null;
+}
+
+function keepListedNetworks(e, nets) {
+    if (!nets.length) return;
+    e.channels = e.channels.filter(c => {
+        const n = channelNetwork(c.slot);
+        return !n || nets.includes(n);
+    });
+}
+
+function addScheduleNetworks(byKey, games, channels, groupOf, now) {
+    const netIndex = buildNetworkIndex(channels, groupOf);
+    const byGame = new Map();
+    for (const [key, e] of byKey) {
+        if (!e.game) continue;
+        const first = byGame.get(e.game);
+        if (!first) { byGame.set(e.game, e); continue; }
+        addLinks(first, e.channels);
+        byKey.delete(key);
+    }
+    for (const g of games) {
+        if (g.state === 'post') continue;
+        if (g.start > now + GUIDE_AHEAD_MS || (g.state !== 'in' && g.start < now - SCHEDULE_BEFORE_MS)) continue;
+        const nets = [...new Set(g.networks.map(networkFor).filter(Boolean))];
+        const links = [];
+        const exact = [];
+        for (const n of nets) {
+            const found = netIndex.get(n);
+            const regional = isRegional(g, n, games);
+            if (regional) continue;
+            exact.push(n);
+            if (!found) continue;
+            links.push(...found.all);
+            if (/college football/i.test(g.sport)) links.push(...found.mirrors);
+        }
+        let target = byGame.get(g) || null;
+        const generic = [];
+        for (const [key, e] of byKey) {
+            if (e.teams || !e.programme || !e.network) continue;
+            if (Math.abs(e.start - g.start) > GENERIC_MATCH_MS || !sportCompatible(g.sport, e.programme)) continue;
+            const net = e.network.toUpperCase();
+            if (exact.some(n => n.re.test(net)) || e.channels.some(c => exact.includes(channelNetwork(c.slot)))) generic.push([key, e]);
+        }
+        const espnNetworks = g.networks.filter(networkFor).slice(0, 2).join(' · ');
+        if (!target && generic.length) {
+            const [, e] = generic.shift();
+            target = e;
+            target.league = target.programme;
+            target.title = g.label;
+            target.teams = g.teams.map(names => names[1] || names[0]);
+            if (espnNetworks) target.network = espnNetworks;
+            delete target.programme;
+        }
+        for (const [key, e] of generic) {
+            addLinks(target, e.channels);
+            byKey.delete(key);
+        }
+        if (!target) {
+            if (!links.length) continue;
+            const key = `espn|${eventKey(g.label, g.start)}`;
+            target = {
+                id: 'iptv_ev_' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 16),
+                title: g.label,
+                teams: g.teams.map(names => names[1] || names[0]),
+                start: g.start,
+                end: g.start + DEFAULT_DURATION_MS,
+                assumedDay: false,
+                sources: [],
+                channels: []
+            };
+            byKey.set(key, target);
+        }
+        if (!target.network && espnNetworks) target.network = espnNetworks;
+        applyGame(target, g, now);
+        addLinks(target, links);
+        keepListedNetworks(target, nets);
+        byGame.set(g, target);
     }
 }
 
@@ -452,6 +666,8 @@ function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category
     }
     if (epgData) addGuideEvents(byKey, [...byKey.values()], epgData, channelsByEpgId, groupOf, now);
     annotateWithSchedule(byKey, schedule, now);
+    if (schedule && schedule.length) addScheduleNetworks(byKey, schedule, channels, groupOf, now);
+    for (const e of byKey.values()) delete e.game;
     const byId = new Map();
     for (const e of byKey.values()) byId.set(e.id, e);
     return byId;

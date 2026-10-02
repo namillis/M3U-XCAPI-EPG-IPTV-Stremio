@@ -56,12 +56,27 @@ function teamNames(team) {
 function parseScoreboard(json, sport) {
     const games = [];
     for (const ev of json?.events || []) {
-        const sides = (ev.competitions?.[0]?.competitors || []).map(c => c.team).filter(Boolean);
-        if (sides.length !== 2) continue;
+        const comp = ev.competitions?.[0];
+        const competitors = (comp?.competitors || []).filter(c => c.team);
+        if (competitors.length !== 2) continue;
         const start = Date.parse(ev.date);
         if (!Number.isFinite(start)) continue;
+        const away = competitors.find(c => c.homeAway === 'away') || competitors[0];
+        const home = competitors.find(c => c !== away) || competitors[1];
+        const networks = [...new Set([
+            ...(comp.geoBroadcasts || []).map(g => g.media?.shortName),
+            ...(comp.broadcasts || []).flatMap(b => b.names || [])
+        ].filter(Boolean))];
         const type = ev.status?.type || {};
-        games.push({ sport, start, teams: sides.map(teamNames), state: type.state || 'pre', detail: type.shortDetail || '' });
+        games.push({
+            sport,
+            start,
+            teams: [teamNames(away.team), teamNames(home.team)],
+            label: `${away.team.displayName || away.team.location} @ ${home.team.displayName || home.team.location}`,
+            networks,
+            state: type.state || 'pre',
+            detail: type.shortDetail || ''
+        });
     }
     return games;
 }
