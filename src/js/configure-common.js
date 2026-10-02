@@ -294,6 +294,7 @@
         if (cfg.epgTimezone) setField('epgTimezone', cfg.epgTimezone);
         setField('epgLocalTimes', !!cfg.epgLocalTimes);
         setField('liveOnly', !!cfg.liveOnly);
+        setField('hideAdult', cfg.hideAdult !== false);
         setField('groupCatalogs', !!cfg.groupCatalogs);
         setField('groupFilter', cfg.groupFilter || '');
         setField('debugMode', !!cfg.debug);

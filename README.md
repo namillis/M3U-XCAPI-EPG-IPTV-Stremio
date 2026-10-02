@@ -9,6 +9,7 @@
 > - Movies & VOD catalog
 > - Series catalog (Xtream native + M3U heuristic grouping)
 > - Live TV only mode (drops movie & series catalogs)
+> - Adult content filter (on by default, hides anything named or grouped "XXX")
 > - Per-group channel catalogs with keyword filter
 > - Reconfigure from Stremio's Configure button (settings pre-filled)
 > - Xtream catch-up: "Start over" and recent past shows on recorded channels, plus a "Catch-up TV" catalog of every recorded channel

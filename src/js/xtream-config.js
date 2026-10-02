@@ -452,6 +452,8 @@
         debug: debug || undefined,
       };
       if (liveOnly) config.liveOnly = true;
+      const hideAdultChk = document.getElementById("hideAdult");
+      if (hideAdultChk && !hideAdultChk.checked) config.hideAdult = false;
       if (catchupChk && catchupChk.checked) config.catchup = true;
       if (groupCatChk && groupCatChk.checked) {
         config.groupCatalogs = true;
