@@ -11,7 +11,7 @@
 > - Live TV only mode (drops movie & series catalogs)
 > - Per-group channel catalogs with keyword filter
 > - Reconfigure from Stremio's Configure button (settings pre-filled)
-> - Xtream catch-up: "Start over" and recent past shows on recorded channels
+> - Xtream catch-up: "Start over" and recent past shows on recorded channels, plus a "Catch-up TV" catalog of every recorded channel
 > - Xtream account check (status, expiry, connections in use)
 > - Optional site password for the setup pages
 > - Client pre‑flight validation with CORS bypass fallback
@@ -257,7 +257,7 @@ curl -X POST http://localhost:7000/api/prefetch \
 | Series Catalog | Heuristic (SxxEyy / Season X) | Native `get_series` + `get_series_info` | Heuristic | Per-episode videos |
 | EPG | XMLTV custom or provided | Panel xmltv.php or custom | Panel xmltv.php or custom | Timezone + offset supported |
 | Live TV only | ✅ | ✅ (skips VOD/series downloads) | ✅ | Removes movie & series catalogs |
-| Catch-up | ❌ | ✅ (`tv_archive` channels) | ❌ | "Start over" + recent shows as extra streams |
+| Catch-up | ❌ | ✅ (`tv_archive` channels) | ❌ | "Start over" + recent shows as extra streams, and a "Catch-up TV" catalog |
 | Group catalogs | ✅ (group-title) | ✅ (categories) | ✅ | Optional keyword filter, max 100 |
 | Logos | tvg-logo / fallback proxy | Uses stream_icon / cover | tvg-logo where present | Multiple sources attempted |
 | CORS Bypass | Yes (prefetch) | Yes (prefetch) | Yes (prefetch) | Browser first, fallback server |
