@@ -2,6 +2,12 @@ const OPEN = Buffer.from('<programme');
 const CLOSE = Buffer.from('</programme>');
 const TITLE = [Buffer.from('<title'), Buffer.from('</title>')];
 const DESC = [Buffer.from('<desc'), Buffer.from('</desc>')];
+const SUB_TITLE = [Buffer.from('<sub-title'), Buffer.from('</sub-title>')];
+const CATEGORY = [Buffer.from('<category'), Buffer.from('</category>')];
+const LIVE = Buffer.from('<live');
+const PREVIOUSLY_SHOWN = Buffer.from('<previously-shown');
+const MAX_CATEGORIES = 3;
+const CATEGORY_MAX_CHARS = 40;
 const MAX_CARRY = 1 << 20;
 const GT = 0x3e;
 const SLASH = 0x2f;
@@ -41,6 +47,28 @@ function childText(buf, from, to, [open, close], maxChars) {
     if (s.startsWith('<![CDATA[')) s = s.slice(9).replace(/]]>[\s\S]*$/, '');
     else s = decodeEntities(s);
     return s.length > maxChars ? s.slice(0, maxChars).trimEnd() : s;
+}
+
+function hasTag(buf, from, to, open) {
+    let a = buf.indexOf(open, from);
+    while (a !== -1 && a < to && !isNameEnd(buf[a + open.length])) a = buf.indexOf(open, a + open.length);
+    return a !== -1 && a < to;
+}
+
+function childTexts(buf, from, to, tag, maxChars, limit) {
+    const out = [];
+    let pos = from;
+    while (out.length < limit) {
+        let a = buf.indexOf(tag[0], pos);
+        while (a !== -1 && a < to && !isNameEnd(buf[a + tag[0].length])) a = buf.indexOf(tag[0], a + tag[0].length);
+        if (a === -1 || a >= to) break;
+        const b = buf.indexOf(tag[1], a);
+        if (b === -1 || b > to) break;
+        const s = childText(buf, a, b + tag[1].length, tag, maxChars);
+        if (s && !out.includes(s)) out.push(s);
+        pos = b + tag[1].length;
+    }
+    return out;
 }
 
 async function parseXmltvStream(stream, { accept, onProgramme, maxText = 400 }) {
@@ -85,7 +113,13 @@ async function parseXmltvStream(stream, { accept, onProgramme, maxText = 400 }) 
             if (accepted) {
                 onProgramme(attrs.channel, accepted,
                     childText(buf, tagEnd, end, TITLE, maxText),
-                    childText(buf, tagEnd, end, DESC, maxText));
+                    childText(buf, tagEnd, end, DESC, maxText),
+                    {
+                        subTitle: childText(buf, tagEnd, end, SUB_TITLE, 120),
+                        categories: childTexts(buf, tagEnd, end, CATEGORY, CATEGORY_MAX_CHARS, MAX_CATEGORIES),
+                        live: hasTag(buf, tagEnd, end, LIVE),
+                        repeat: hasTag(buf, tagEnd, end, PREVIOUSLY_SHOWN)
+                    });
             }
             pos = end;
         }
