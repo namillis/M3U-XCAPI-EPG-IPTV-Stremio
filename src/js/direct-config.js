@@ -230,6 +230,8 @@
                 debug: debug || undefined
             };
             if (liveOnlyChk && liveOnlyChk.checked) config.liveOnly = true;
+            const hideAdultChk = document.getElementById('hideAdult');
+            if (hideAdultChk && !hideAdultChk.checked) config.hideAdult = false;
             if (groupCatChk && groupCatChk.checked) {
                 config.groupCatalogs = true;
                 if (groupFilterInp && groupFilterInp.value.trim()) config.groupFilter = groupFilterInp.value.trim();
