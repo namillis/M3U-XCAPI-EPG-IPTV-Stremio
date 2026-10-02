@@ -74,6 +74,8 @@ function parseScoreboard(json, sport) {
             teams: [teamNames(away.team), teamNames(home.team)],
             label: `${away.team.displayName || away.team.location} @ ${home.team.displayName || home.team.location}`,
             networks,
+            color: home.team.color || away.team.color || null,
+            altColor: home.team.alternateColor || away.team.alternateColor || null,
             state: type.state || 'pre',
             detail: type.shortDetail || ''
         });
