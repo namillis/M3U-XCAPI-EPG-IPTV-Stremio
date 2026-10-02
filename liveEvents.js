@@ -172,8 +172,11 @@ function cardText(title) {
 function eventCardUrl(e) {
     const source = e.sources[0] || '';
     const color = CARD_COLORS[parseInt(crypto.createHash('md5').update(source).digest('hex').slice(0, 6), 16) % CARD_COLORS.length];
-    const footer = e.network || source;
-    let text = cardText(e.network ? e.title.replace(` · ${e.network}`, '') : e.title);
+    const footer = e.sport || e.network || source;
+    let title = e.network ? e.title.replace(` · ${e.network}`, '') : e.title;
+    const tag = title.match(/\s*\(([^)]+)\)\s*$/);
+    if (tag && e.sport && e.sport.toLowerCase().includes(tag[1].toLowerCase())) title = title.slice(0, tag.index);
+    let text = cardText(title);
     if (footer && text.length + 2 + footer.length <= CARD_TEXT_MAX) text += `\\n${footer}`;
     return `https://placehold.co/640x360/${color}/FFFFFF/png?font=oswald&text=${encodeURIComponent(text)}`;
 }
@@ -259,6 +262,48 @@ function sideMatches(a, b) {
 
 function sameMatchup(x, y) {
     return (sideMatches(x[0], y[0]) && sideMatches(x[1], y[1])) || (sideMatches(x[0], y[1]) && sideMatches(x[1], y[0]));
+}
+
+const SCHEDULE_WINDOW_MS = 75 * 60000;
+const IN_PROGRESS_GRACE_MS = 20 * 60000;
+
+function nameMatches(side, name) {
+    const a = teamWords(side);
+    const b = teamWords(name);
+    if (!a.length || !b.length) return false;
+    const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+    return short.every(w => long.includes(w));
+}
+
+function teamMatches(side, names) {
+    return names.some(n => nameMatches(side, n));
+}
+
+function findGame(e, games) {
+    let best = null;
+    const [x, y] = e.teams;
+    for (const g of games) {
+        const d = Math.abs(g.start - e.start);
+        if (d > SCHEDULE_WINDOW_MS) continue;
+        const hit = (teamMatches(x, g.teams[0]) && teamMatches(y, g.teams[1])) ||
+            (teamMatches(x, g.teams[1]) && teamMatches(y, g.teams[0]));
+        if (hit && (!best || d < best.d)) best = { g, d };
+    }
+    return best ? best.g : null;
+}
+
+function annotateWithSchedule(byKey, games, now) {
+    if (!games || !games.length) return;
+    for (const e of byKey.values()) {
+        if (!e.teams) continue;
+        const g = findGame(e, games);
+        if (!g) continue;
+        e.sport = g.sport;
+        e.status = g.state;
+        e.statusDetail = g.detail;
+        if (g.state === 'post') e.final = true;
+        else if (g.state === 'in') e.end = Math.max(e.end, now + IN_PROGRESS_GRACE_MS);
+    }
 }
 
 function networkName(channelName) {
@@ -371,7 +416,7 @@ function addGuideEvents(byKey, slotEvents, epgData, channelsByEpgId, groupOf, no
     }
 }
 
-function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category || c.attributes?.['group-title'], epgData = null, epgIdOf = null } = {}) {
+function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category || c.attributes?.['group-title'], epgData = null, epgIdOf = null, schedule = null } = {}) {
     const byKey = new Map();
     const channelsByEpgId = new Map();
     for (const c of channels) {
@@ -406,12 +451,14 @@ function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category
         entry.channels.push({ id: c.id, slot: ev.slot, source: src, logo: c.logo || c.attributes?.['tvg-logo'] || null });
     }
     if (epgData) addGuideEvents(byKey, [...byKey.values()], epgData, channelsByEpgId, groupOf, now);
+    annotateWithSchedule(byKey, schedule, now);
     const byId = new Map();
     for (const e of byKey.values()) byId.set(e.id, e);
     return byId;
 }
 
 function eventState(e, now = Date.now()) {
+    if (e.final) return null;
     if (now >= e.start - EARLY_MS && now < e.end) return now < e.start ? 'soon' : 'live';
     if (now < e.start && e.start - now <= SOON_MS) return 'soon';
     return null;
@@ -431,4 +478,4 @@ function currentEvents(index, now = Date.now(), { source = null, includeAssumed 
     return [...live, ...soon];
 }
 
-module.exports = { parseEventSlot, buildEventIndex, currentEvents, eventState, eventCardUrl, titleCase, sourceLabel };
+module.exports = { parseEventSlot, buildEventIndex, currentEvents, eventState, eventCardUrl, findGame, titleCase, sourceLabel };
