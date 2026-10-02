@@ -367,6 +367,7 @@ curl -X POST http://localhost:7000/api/prefetch \
 | EPG | XMLTV custom or provided | Panel xmltv.php or custom | Panel xmltv.php or custom | Timezone + offset supported |
 | Live TV only | ✅ | ✅ (skips VOD/series downloads) | ✅ | Removes movie & series catalogs |
 | Catch-up | ❌ | ✅ (`tv_archive` channels) | ❌ | "Start over" + recent shows as extra streams, and a "Catch-up TV" catalog |
+| Live Now | ✅ | ✅ | ✅ | Reads event channel names like `ESPN PLUS 12 : A @ B OCT 2 – 7:00 PM ET` and lists what's live or starting within an hour, one tile per event with every matching channel as a stream. Undated slots only show when you filter by their group or search |
 | Group catalogs | ✅ (group-title) | ✅ (categories) | ✅ | Optional keyword filter, max 100 |
 | Logos | tvg-logo / fallback proxy | Uses stream_icon / cover | tvg-logo where present | Multiple sources attempted |
 | CORS Bypass | Yes (prefetch) | Yes (prefetch) | Yes (prefetch) | Browser first, fallback server |
