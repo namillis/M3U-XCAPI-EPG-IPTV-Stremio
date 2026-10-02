@@ -5,7 +5,7 @@
 // episodes are transformed into Stremio 'videos' (season/episode).
 const fetch = require("node-fetch");
 
-async function fetchData(addonInstance) {
+async function fetchData(addonInstance, { epg = true } = {}) {
   const { config } = addonInstance;
   const {
     xtreamUrl,
@@ -22,7 +22,7 @@ async function fetchData(addonInstance) {
   addonInstance.channels = [];
   addonInstance.movies = [];
   if (config.includeSeries !== false) addonInstance.series = [];
-  addonInstance.epgData = {};
+  if (epg) addonInstance.epgData = {};
 
   if (xtreamUseM3U) {
     // M3U plus mode (series heuristic limited)
@@ -215,7 +215,7 @@ async function fetchData(addonInstance) {
   }
 
   // EPG handling:
-  if (config.enableEpg) {
+  if (config.enableEpg && epg) {
     const customEpgUrl =
       config.epgUrl && typeof config.epgUrl === "string" && config.epgUrl.trim()
         ? config.epgUrl.trim()
