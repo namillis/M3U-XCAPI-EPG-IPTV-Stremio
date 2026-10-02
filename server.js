@@ -351,13 +351,13 @@ app.use("/:token", async (req, res, next) => {
 app.get("/:token/logo/:tvgId.png", async (req, res) => {
   if (!req.addonInterface) {
     return res.redirect(
-      `https://via.placeholder.com/300x400/333333/FFFFFF?text=${encodeURIComponent(req.params.tvgId)}`,
+      `https://placehold.co/480x270/333333/FFFFFF/png?text=${encodeURIComponent(req.params.tvgId)}`,
     );
   }
   const sources = req.addonInterface._logoSources || [];
   if (!sources.length) {
     return res.redirect(
-      `https://via.placeholder.com/300x400/333333/FFFFFF?text=${encodeURIComponent(req.params.tvgId)}`,
+      `https://placehold.co/480x270/333333/FFFFFF/png?text=${encodeURIComponent(req.params.tvgId)}`,
     );
   }
   const { tvgId } = req.params;
@@ -388,7 +388,7 @@ app.get("/:token/logo/:tvgId.png", async (req, res) => {
     }
   }
   res.redirect(
-    `https://via.placeholder.com/300x400/333333/FFFFFF?text=${encodeURIComponent(noCountry.toUpperCase().slice(0, 12))}`,
+    `https://placehold.co/480x270/333333/FFFFFF/png?text=${encodeURIComponent(noCountry.toUpperCase().slice(0, 12))}`,
   );
 });
 
