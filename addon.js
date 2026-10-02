@@ -170,7 +170,7 @@ function isSeparator(item) {
     return !!item && typeof item.name === 'string' && SEPARATOR_RE.test(item.name);
 }
 const EPG_FUTURE_MS = 36 * 3600000;
-const EPG_REFRESH_MS = parseInt(process.env.EPG_REFRESH_MS || (6 * 3600 * 1000).toString(), 10);
+const EPG_REFRESH_MS = parseInt(process.env.EPG_REFRESH_MS || (3600 * 1000).toString(), 10);
 const EPG_CACHE_PREFIX = 'addon:epg:v2:';
 const CATCHUP_TTL_MS = 5 * 60 * 1000;
 const CATCHUP_CACHE_MAX = 200;
