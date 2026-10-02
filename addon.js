@@ -6,7 +6,7 @@ const { addonBuilder } = require("stremio-addon-sdk");
 const crypto = require("crypto");
 const LRUCache = require("./lruCache");
 const { parseXmltvStream } = require("./epgParser");
-const { buildEventIndex, currentEvents, eventState, eventCardUrl } = require("./liveEvents");
+const { buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, SPORT_CATEGORIES } = require("./liveEvents");
 const { getSchedule } = require("./espnSchedule");
 const { version: ADDON_VERSION } = require("./package.json");
 const fetch = require('node-fetch');
@@ -413,18 +413,18 @@ class M3UEPGAddon {
 
     buildLiveNowCatalog(tvCatalog) {
         const catalogs = this.manifestRef.catalogs;
-        const existing = catalogs.findIndex(c => c.id === 'iptv_live_now');
-        if (existing !== -1) catalogs.splice(existing, 1);
+        for (const id of ['iptv_live_now', 'iptv_today']) {
+            const existing = catalogs.findIndex(c => c.id === id);
+            if (existing !== -1) catalogs.splice(existing, 1);
+        }
         const index = this.liveEventIndex();
         if (!index.size) return;
         const sources = [...new Set([...index.values()].flatMap(e => e.sources))].sort((a, b) => a.localeCompare(b));
-        catalogs.splice(catalogs.indexOf(tvCatalog), 0, {
-            type: 'tv',
-            id: 'iptv_live_now',
-            name: 'Live Now',
-            extra: [{ name: 'genre', options: sources }, { name: 'search' }, { name: 'skip' }],
-            genres: sources
-        });
+        const options = [...SPORT_CATEGORIES, ...sources.filter(s => !SPORT_CATEGORIES.includes(s))];
+        const extra = [{ name: 'genre', options }, { name: 'search' }, { name: 'skip' }];
+        catalogs.splice(catalogs.indexOf(tvCatalog), 0,
+            { type: 'tv', id: 'iptv_live_now', name: 'Live Now', extra, genres: options },
+            { type: 'tv', id: 'iptv_today', name: 'Today', extra: extra.map(x => ({ ...x })), genres: options });
         this.log.debug('Live Now catalog built', { events: index.size, sources: sources.length });
     }
 
@@ -1186,14 +1186,15 @@ async function createAddon(config) {
                 // Background update
                 addonInstance.updateData().catch(() => { });
 
-                if (args.type === 'tv' && args.id === 'iptv_live_now') {
+                if (args.type === 'tv' && (args.id === 'iptv_live_now' || args.id === 'iptv_today')) {
                     const extra = args.extra || {};
                     const now = Date.now();
                     const q = extra.search ? extra.search.toLowerCase() : '';
-                    let events = currentEvents(addonInstance.liveEventIndex(), now, {
-                        source: extra.genre || null,
-                        includeAssumed: !!q
-                    });
+                    const opts = { genre: extra.genre || null, includeAssumed: !!q };
+                    const index = addonInstance.liveEventIndex();
+                    let events = args.id === 'iptv_today'
+                        ? todayEvents(index, now, { ...opts, zone: addonInstance.timezone || 'America/New_York' })
+                        : currentEvents(index, now, opts);
                     if (q) events = events.filter(e => e.title.toLowerCase().includes(q));
                     const skip = extra.skip ? parseInt(extra.skip) : 0;
                     const metas = events.slice(skip, skip + 100).map(e => addonInstance.eventMetaPreview(e, now));

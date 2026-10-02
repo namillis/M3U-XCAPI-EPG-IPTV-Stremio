@@ -147,7 +147,7 @@ function parseEventSlot(name, now, hintText = '') {
 function wrapLines(text, width) {
     const lines = [];
     let line = '';
-    for (const word of text.replace(/ +([–—-]) +/g, '\u00a0$1 ').split(/ +/).filter(Boolean)) {
+    for (const word of text.replace(/ +([–—-]|@|vs\.?) +/gi, '\u00a0$1 ').split(/ +/).filter(Boolean)) {
         if (line && line.length + 1 + word.length > width) {
             lines.push(line);
             line = word;
@@ -169,16 +169,23 @@ function cardText(title) {
     return text.slice(0, CARD_TEXT_MAX).replace(/\\+$/, '');
 }
 
+function brightness(hex) {
+    const n = parseInt(hex, 16);
+    return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+}
+
 function eventCardUrl(e) {
     const source = e.sources[0] || '';
-    const color = CARD_COLORS[parseInt(crypto.createHash('md5').update(source).digest('hex').slice(0, 6), 16) % CARD_COLORS.length];
+    const teamColor = [e.color, e.altColor].find(c => typeof c === 'string' && /^[0-9a-f]{6}$/i.test(c));
+    const color = teamColor || CARD_COLORS[parseInt(crypto.createHash('md5').update(source).digest('hex').slice(0, 6), 16) % CARD_COLORS.length];
+    const textColor = brightness(color) > 0.6 ? '111111' : 'FFFFFF';
     const footer = e.sport || e.network || source;
     let title = e.network ? e.title.replace(` · ${e.network}`, '') : e.title;
     const tag = title.match(/\s*\(([^)]+)\)\s*$/);
     if (tag && e.sport && e.sport.toLowerCase().includes(tag[1].toLowerCase())) title = title.slice(0, tag.index);
     let text = cardText(title);
     if (footer && text.length + 2 + footer.length <= CARD_TEXT_MAX) text += `\\n${footer}`;
-    return `https://placehold.co/640x360/${color}/FFFFFF/png?font=oswald&text=${encodeURIComponent(text)}`;
+    return `https://placehold.co/640x360/${color}/${textColor}/png?font=oswald&text=${encodeURIComponent(text)}`;
 }
 
 function eventKey(title, start) {
@@ -300,6 +307,8 @@ function annotateWithSchedule(byKey, games, now) {
         if (!g) continue;
         e.sport = g.sport;
         e.game = g;
+        e.color = g.color;
+        e.altColor = g.altColor;
         e.status = g.state;
         e.statusDetail = g.detail;
         if (g.state === 'post') e.final = true;
@@ -532,6 +541,8 @@ function applyGame(e, g, now) {
     e.sport = g.sport;
     e.status = g.state;
     e.statusDetail = g.detail;
+    e.color = g.color;
+    e.altColor = g.altColor;
     if (g.state === 'in') e.end = Math.max(e.end, now + IN_PROGRESS_GRACE_MS);
     if (isBareMatchup(e.title)) e.title = g.label;
 }
@@ -539,7 +550,7 @@ function applyGame(e, g, now) {
 const LEADING_SPORT_RE = /^(?:(?:men'?s|women'?s|mens|womens)\s+)?(?:college\s+)?(?:football|soccer|field hockey|hockey|volleyball|basketball|baseball|softball|lacrosse)\s+/i;
 
 function isBareMatchup(title) {
-    const rest = String(title).replace(LEADING_SPORT_RE, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const rest = String(title).replace(LEADING_SPORT_RE, '').replace(/\s*\([^)]*\)\s*$/, '').replace(/(^|\s)#\d+\s+/g, '$1').trim();
     const m = matchupOf(rest);
     return !!m && m.label.replace(/\s+/g, ' ').toLowerCase() === rest.replace(/\s+/g, ' ').toLowerCase();
 }
@@ -562,6 +573,7 @@ function keepListedNetworks(e, nets) {
 
 function addScheduleNetworks(byKey, games, channels, groupOf, now) {
     const netIndex = buildNetworkIndex(channels, groupOf);
+    const dayEnd = dayBounds(now).end;
     const byGame = new Map();
     for (const [key, e] of byKey) {
         if (!e.game) continue;
@@ -572,7 +584,7 @@ function addScheduleNetworks(byKey, games, channels, groupOf, now) {
     }
     for (const g of games) {
         if (g.state === 'post') continue;
-        if (g.start > now + GUIDE_AHEAD_MS || (g.state !== 'in' && g.start < now - SCHEDULE_BEFORE_MS)) continue;
+        if (g.start >= dayEnd || (g.state !== 'in' && g.start < now - SCHEDULE_BEFORE_MS)) continue;
         const nets = [...new Set(g.networks.map(networkFor).filter(Boolean))];
         const links = [];
         const exact = [];
@@ -680,11 +692,57 @@ function eventState(e, now = Date.now()) {
     return null;
 }
 
-function currentEvents(index, now = Date.now(), { source = null, includeAssumed = false } = {}) {
+const SPORT_CATEGORIES = ['Football', 'Basketball', 'Baseball', 'Hockey', 'Soccer', 'Volleyball', 'Field Hockey', 'Lacrosse',
+    'Tennis', 'Golf', 'Motorsport', 'Fighting', 'Wrestling', 'Rugby', 'Cricket', 'Darts', 'Snooker', 'Cycling', 'Horse Racing'];
+const CATEGORY_RULES = [
+    ['Field Hockey', /field hockey/i],
+    ['Horse Racing', /horse|thoroughbred|breeders|keeneland|racecourse|raceday|\bracing tv\b/i],
+    ['Soccer', /soccer|f[uú]tbol|futsal|premier league|\befl\b|la ?liga|serie a|bundesliga|ligue 1|eredivisie|\bmls\b|\bnwsl\b|concacaf|uefa|fifa|champions league|europa league|nations league|copa\b|live football|liga mx|primera divisi/i],
+    ['Football', /football|\bnfl\b|\bncaaf\b|\bcfl\b/i],
+    ['Basketball', /basketball|baloncesto|\bnba\b|\bwnba\b|\bncaab\b/i],
+    ['Baseball', /baseball|b[eé]isbol|\bmlb\b/i],
+    ['Hockey', /hockey|\bnhl\b/i],
+    ['Volleyball', /volleyball/i],
+    ['Lacrosse', /lacrosse/i],
+    ['Tennis', /tennis|\batp\b|\bwta\b|padel/i],
+    ['Golf', /\bgolf\b|\bpga\b|\blpga\b|liv golf/i],
+    ['Motorsport', /formula (?:1|2|3|e)|\bf1\b|motogp|moto2|moto3|nascar|indycar|\bimsa\b|grand prix|rally|\bwrc\b|supercars|motocross|supercross|\bracing\b|\bbmx\b/i],
+    ['Fighting', /\bufc\b|\bmma\b|boxing|bare knuckle|\bbkfc\b|\bpfl\b|\bfights?\b|fight night|bellator|kickboxing|muay thai|\bbjj\b/i],
+    ['Wrestling', /wrestling|\baew\b|\bwwe\b/i],
+    ['Rugby', /rugby/i],
+    ['Cricket', /cricket|\bodi\b|\bt20\b/i],
+    ['Darts', /darts/i],
+    ['Snooker', /snooker/i],
+    ['Cycling', /cycling|\buci\b|tour de /i]
+];
+
+function categoryOf(e) {
+    if (e.category !== undefined) return e.category;
+    const text = [e.sport, e.league, e.programme, e.title, ...(e.sources || [])].filter(Boolean).join(' | ');
+    const hit = CATEGORY_RULES.find(([, re]) => re.test(text));
+    e.category = hit ? hit[0] : null;
+    return e.category;
+}
+
+function matchesGenre(e, genre, includeAssumed) {
+    if (!genre) return !e.assumedDay || includeAssumed;
+    if (SPORT_CATEGORIES.includes(genre)) return categoryOf(e) === genre && (!e.assumedDay || includeAssumed);
+    return e.sources.includes(genre);
+}
+
+function dayBounds(now, zone = 'America/New_York') {
+    const { y, mo, d } = zonedParts(zone, now);
+    const start = zonedToUtc(zone, y, mo, d, 0, 0);
+    const end = zonedToUtc(zone, y, mo, d + 1, 0, 0);
+    return { start, end };
+}
+
+function currentEvents(index, now = Date.now(), { genre = null, source = null, includeAssumed = false } = {}) {
+    const filter = genre || source;
     const live = [];
     const soon = [];
     for (const e of index.values()) {
-        if (source ? !e.sources.includes(source) : (e.assumedDay && !includeAssumed)) continue;
+        if (!matchesGenre(e, filter, includeAssumed)) continue;
         const s = eventState(e, now);
         if (s === 'live') live.push(e);
         else if (s === 'soon') soon.push(e);
@@ -694,4 +752,15 @@ function currentEvents(index, now = Date.now(), { source = null, includeAssumed 
     return [...live, ...soon];
 }
 
-module.exports = { parseEventSlot, buildEventIndex, currentEvents, eventState, eventCardUrl, findGame, titleCase, sourceLabel };
+function todayEvents(index, now = Date.now(), { genre = null, includeAssumed = false, zone = 'America/New_York' } = {}) {
+    const { start, end } = dayBounds(now, zone);
+    const out = [];
+    for (const e of index.values()) {
+        if (e.final || e.end <= now || e.start >= end || e.start < start - 12 * 3600000) continue;
+        if (!matchesGenre(e, genre, includeAssumed)) continue;
+        out.push(e);
+    }
+    return out.sort((a, b) => a.start - b.start || a.title.localeCompare(b.title));
+}
+
+module.exports = { parseEventSlot, buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, findGame, categoryOf, titleCase, sourceLabel, SPORT_CATEGORIES };
