@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const LRUCache = require("./lruCache");
 const { parseXmltvStream } = require("./epgParser");
 const { buildEventIndex, currentEvents, eventState, eventCardUrl } = require("./liveEvents");
+const { getSchedule } = require("./espnSchedule");
 const { version: ADDON_VERSION } = require("./package.json");
 const fetch = require('node-fetch');
 const zlib = require('zlib');
@@ -392,16 +393,19 @@ class M3UEPGAddon {
 
     liveEventIndex() {
         const now = Date.now();
+        const schedule = getSchedule(now);
         if (!this.eventIndex || this.eventIndexFor !== this.channels || this.eventIndexEpg !== this.epgData ||
-            now - this.eventIndexAt > EVENT_INDEX_TTL_MS) {
+            this.eventIndexSchedule !== schedule.version || now - this.eventIndexAt > EVENT_INDEX_TTL_MS) {
             this.eventIndex = buildEventIndex(this.channels, {
                 now,
                 groupOf: c => this.channelGroup(c),
                 epgData: this.epgData,
-                epgIdOf: c => c.attributes?.['tvg-id'] || c.attributes?.['tvg-name'] || null
+                epgIdOf: c => c.attributes?.['tvg-id'] || c.attributes?.['tvg-name'] || null,
+                schedule: schedule.games
             });
             this.eventIndexFor = this.channels;
             this.eventIndexEpg = this.epgData;
+            this.eventIndexSchedule = schedule.version;
             this.eventIndexAt = now;
         }
         return this.eventIndex;
@@ -434,13 +438,16 @@ class M3UEPGAddon {
         const when = this.formatEventTime(e.start, now);
         const live = eventState(e, now) === 'live';
         const count = e.channels.length;
+        const headline = e.status === 'in' && e.statusDetail
+            ? `🔴 Live · ${e.statusDetail}`
+            : (live ? `🔴 Live now · started ${when}` : `⏰ Starts ${when}`);
         return {
             id: e.id,
             type: 'tv',
             name: e.title,
             poster: eventCardUrl(e),
             posterShape: 'landscape',
-            description: `${live ? `🔴 Live now · started ${when}` : `⏰ Starts ${when}`}\n${[e.league, e.network].filter(Boolean).map(s => s + ' · ').join('')}${e.sources.join(' · ')} · ${count} channel${count === 1 ? '' : 's'}`,
+            description: `${headline}\n${[e.sport || e.league, e.network].filter(Boolean).map(s => s + ' · ').join('')}${e.sources.join(' · ')} · ${count} channel${count === 1 ? '' : 's'}`,
             genres: e.sources,
             runtime: live ? 'Live' : when
         };
