@@ -772,7 +772,7 @@ class M3UEPGAddon {
         if (logoAttr && logoAttr.trim()) return logoAttr;
         const tvgId = item.attributes?.['tvg-id'] || item.attributes?.['tvg-name'];
         if (!tvgId)
-            return `https://via.placeholder.com/300x400/333333/FFFFFF?text=${encodeURIComponent(item.name)}`;
+            return `https://placehold.co/480x270/333333/FFFFFF/png?text=${encodeURIComponent(item.name)}`;
         return `logo/${encodeURIComponent(tvgId)}.png`;
     }
 
@@ -785,6 +785,7 @@ class M3UEPGAddon {
                 ? `📡 Now: ${current.title}${current.description ? `\n${current.description}` : ''}`
                 : '📡 Live Channel';
             meta.poster = this.deriveFallbackLogoUrl(item);
+            meta.posterShape = 'landscape';
             meta.genres = item.category
                 ? [item.category]
                 : (item.attributes?.['group-title'] ? [item.attributes['group-title']] : ['Live TV']);
@@ -792,7 +793,7 @@ class M3UEPGAddon {
         } else if (item.type === 'movie') {
             meta.poster = item.poster ||
                 item.attributes?.['tvg-logo'] ||
-                `https://via.placeholder.com/300x450/CC6600/FFFFFF?text=${encodeURIComponent(item.name)}`;
+                `https://placehold.co/300x450/CC6600/FFFFFF/png?text=${encodeURIComponent(item.name)}`;
             meta.year = item.year;
             if (!meta.year) {
                 const m = item.name.match(/\((\d{4})\)/);
@@ -803,7 +804,7 @@ class M3UEPGAddon {
         } else if (item.type === 'series') {
             meta.poster = item.poster ||
                 item.attributes?.['tvg-logo'] ||
-                `https://via.placeholder.com/300x450/3366CC/FFFFFF?text=${encodeURIComponent(item.name)}`;
+                `https://placehold.co/300x450/3366CC/FFFFFF/png?text=${encodeURIComponent(item.name)}`;
             meta.description = item.plot || item.attributes?.['plot'] || 'Series / Show';
             meta.genres = item.category
                 ? [item.category]
@@ -928,7 +929,7 @@ class M3UEPGAddon {
             name: seriesItem.name,
             poster: seriesItem.poster ||
                 seriesItem.attributes?.['tvg-logo'] ||
-                `https://via.placeholder.com/300x450/3366CC/FFFFFF?text=${encodeURIComponent(seriesItem.name)}`,
+                `https://placehold.co/300x450/3366CC/FFFFFF/png?text=${encodeURIComponent(seriesItem.name)}`,
             description: seriesItem.plot || seriesItem.attributes?.['plot'] || 'Series / Show',
             genres: seriesItem.category
                 ? [seriesItem.category]
@@ -977,6 +978,7 @@ class M3UEPGAddon {
                 type: 'tv',
                 name: item.name,
                 poster: this.deriveFallbackLogoUrl(item),
+                posterShape: 'landscape',
                 description,
                 genres: item.category
                     ? [item.category]
@@ -995,7 +997,7 @@ class M3UEPGAddon {
                 type: 'movie',
                 name: item.name,
                 poster: item.poster || item.attributes?.['tvg-logo'] ||
-                    `https://via.placeholder.com/300x450/CC6600/FFFFFF?text=${encodeURIComponent(item.name)}`,
+                    `https://placehold.co/300x450/CC6600/FFFFFF/png?text=${encodeURIComponent(item.name)}`,
                 description,
                 genres: item.attributes?.['group-title'] ? [item.attributes['group-title']] : ['Movie'],
                 year
@@ -1183,7 +1185,7 @@ async function createAddon(config) {
                                 type: 'series',
                                 name: seriesItem.name,
                                 poster: seriesItem.poster || seriesItem.attributes?.['tvg-logo'] ||
-                                    `https://via.placeholder.com/300x450/3366CC/FFFFFF?text=${encodeURIComponent(seriesItem.name)}`,
+                                    `https://placehold.co/300x450/3366CC/FFFFFF/png?text=${encodeURIComponent(seriesItem.name)}`,
                                 description: seriesItem.plot || seriesItem.attributes?.['plot'] || 'Series / Show',
                                 genres: seriesItem.category
                                     ? [seriesItem.category]
