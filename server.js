@@ -343,6 +343,10 @@ app.use("/:token", async (req, res, next) => {
 
   req.addonInterface = iface;
   req.configToken = token;
+  if (typeof iface.setPublicBase === "function") {
+    const proto = (req.get("x-forwarded-proto") || req.protocol).split(",")[0];
+    iface.setPublicBase(`${proto}://${req.get("host")}/${token}`);
+  }
   dlog("Request", req.method, req.originalUrl);
   next();
 });
@@ -390,6 +394,27 @@ app.get("/:token/logo/:tvgId.png", async (req, res) => {
   res.redirect(
     `https://placehold.co/480x270/333333/FFFFFF/png?text=${encodeURIComponent(noCountry.toUpperCase().slice(0, 12))}`,
   );
+});
+
+// Live Now / Today event cards
+app.get("/:token/card/:id.jpg", async (req, res) => {
+  const iface = req.addonInterface;
+  const fallback = () => {
+    const url = iface && typeof iface.eventCardFallback === "function" ? iface.eventCardFallback(req.params.id) : null;
+    return url ? res.redirect(url) : res.status(404).end();
+  };
+  try {
+    const buf = iface && typeof iface.renderEventCard === "function"
+      ? await iface.renderEventCard(req.params.id)
+      : null;
+    if (!buf) return fallback();
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return res.end(buf);
+  } catch (e) {
+    console.warn("[CARDS] Render failed:", e.message);
+    return fallback();
+  }
 });
 
 // Serve manifest directly (bypasses SDK's 8KB-limited frozen manifest)

@@ -6,7 +6,8 @@ const { addonBuilder } = require("stremio-addon-sdk");
 const crypto = require("crypto");
 const LRUCache = require("./lruCache");
 const { parseXmltvStream } = require("./epgParser");
-const { buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, SPORT_CATEGORIES } = require("./liveEvents");
+const { buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, cardTitleFor, categoryOf, SPORT_CATEGORIES } = require("./liveEvents");
+const eventCards = require("./eventCard");
 const { getSchedule } = require("./espnSchedule");
 const { version: ADDON_VERSION } = require("./package.json");
 const fetch = require('node-fetch');
@@ -178,6 +179,7 @@ const CATCHUP_TTL_MS = 5 * 60 * 1000;
 const EVENT_INDEX_TTL_MS = 10 * 60 * 1000;
 const LIVE_NOW_CACHE_S = 60;
 const EVENT_STREAMS_MAX = 25;
+const cardCache = new LRUCache({ max: 400, ttl: 12 * 3600 * 1000 });
 const CATCHUP_CACHE_MAX = 200;
 const EPG_DESC_MAX = 400;
 
@@ -445,7 +447,7 @@ class M3UEPGAddon {
             id: e.id,
             type: 'tv',
             name: e.title,
-            poster: eventCardUrl(e),
+            poster: this.eventPosterUrl(e),
             posterShape: 'landscape',
             description: `${headline}\n${[e.sport || e.league, e.network].filter(Boolean).map(s => s + ' · ').join('')}${e.sources.join(' · ')} · ${count} channel${count === 1 ? '' : 's'}`,
             genres: e.sources,
@@ -456,6 +458,34 @@ class M3UEPGAddon {
     eventChannels(e) {
         if (e.channels.length <= EVENT_STREAMS_MAX) return e.channels;
         return [...e.channels].sort((a, b) => a.slot.length - b.slot.length).slice(0, EVENT_STREAMS_MAX);
+    }
+
+    cardSpec(e) {
+        const category = categoryOf(e);
+        return {
+            title: cardTitleFor(e),
+            category,
+            color: eventCards.cardColor(e, category),
+            footer: [e.sport, e.network].filter(Boolean).join(' · ') || e.sources[0] || ''
+        };
+    }
+
+    eventPosterUrl(e) {
+        if (!eventCards.available() || !this.publicBase) return eventCardUrl(e);
+        const v = crypto.createHash('md5').update(JSON.stringify(this.cardSpec(e))).digest('hex').slice(0, 10);
+        return `${this.publicBase}/card/${e.id}.jpg?v=${v}`;
+    }
+
+    async renderEventCard(id) {
+        const e = this.liveEventIndex().get(id);
+        if (!e) return null;
+        const spec = this.cardSpec(e);
+        const key = JSON.stringify(spec);
+        const cached = cardCache.get(key);
+        if (cached) return cached;
+        const buf = await eventCards.renderCard(spec);
+        if (buf) cardCache.set(key, buf);
+        return buf;
     }
 
     getEventMeta(id) {
@@ -1331,6 +1361,12 @@ async function createAddon(config) {
         });
 
         const iface = builder.getInterface();
+        iface.setPublicBase = base => { addonInstance.publicBase = base; };
+        iface.renderEventCard = id => addonInstance.renderEventCard(id);
+        iface.eventCardFallback = id => {
+            const e = addonInstance.liveEventIndex().get(id);
+            return e ? eventCardUrl(e) : null;
+        };
         addonInstance.manifestReady = true;
         addonInstance.buildGenresInManifest();
 
