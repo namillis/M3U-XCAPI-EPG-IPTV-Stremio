@@ -13,7 +13,8 @@ const NOISE_PARENS = /\s*\((?:ESP|ESPAÑOL|ESPANOL|SPANISH|PORTUGUÊS|PORTUGUES|
 const ACRONYMS = new Set(['UFC', 'NFL', 'NHL', 'NBA', 'MLB', 'MLS', 'WNBA', 'NCAA', 'NCAAF', 'NCAAB', 'ATP', 'WTA', 'PGA', 'LPGA', 'F1', 'F2', 'F3',
     'WRC', 'IMSA', 'UCI', 'AEW', 'WWE', 'PFL', 'BMX', 'MMA', 'PPV', 'TV', 'FC', 'SC', 'AFC', 'CF', 'KR', 'II', 'III', 'IV', 'US', 'USA', 'UK',
     'UEFA', 'FIFA', 'PDC', 'BKFC', 'MPC', 'VPRC', 'SNF', 'MNF', 'TNF', 'ODI', 'T20', 'NY', 'LA', 'PSG', 'RB', 'AC', 'CBS', 'ESPN', 'ESPN2', 'ESPNU', 'NJ',
-    'UC', 'VCU', 'UCLA', 'USC', 'LSU', 'TCU', 'SMU', 'BYU', 'UCF', 'UNLV', 'UTEP', 'UTSA', 'FIU', 'FAU', 'UAB', 'UNC', 'NC', 'UIC', 'NJIT', 'SIU', 'UMBC', 'CSU', 'FGCU', 'SEC', 'ACC', 'AAC', 'MAC', 'CAA', 'NEC', 'SWAC', 'MEAC']);
+    'UC', 'VCU', 'UCLA', 'USC', 'LSU', 'TCU', 'SMU', 'BYU', 'UCF', 'UNLV', 'UTEP', 'UTSA', 'FIU', 'FAU', 'UAB', 'UNC', 'NC', 'UIC', 'NJIT', 'SIU', 'UMBC', 'CSU', 'FGCU', 'SEC', 'ACC', 'AAC', 'MAC', 'CAA', 'NEC', 'SWAC', 'MEAC',
+    'TNT', 'NESN', 'MUTV', 'TYC', 'BT', 'SNY', 'BTN', 'NBC', 'ABC', 'TSN', 'GOL', 'EN', 'ES', 'MLBN', 'NBCSN', 'BBC', 'ITV']);
 
 const DEFAULT_DURATION_MS = 3 * 3600000;
 const DURATIONS = [
@@ -171,8 +172,9 @@ function cardText(title) {
 function eventCardUrl(e) {
     const source = e.sources[0] || '';
     const color = CARD_COLORS[parseInt(crypto.createHash('md5').update(source).digest('hex').slice(0, 6), 16) % CARD_COLORS.length];
-    let text = cardText(e.title);
-    if (source && text.length + 2 + source.length <= CARD_TEXT_MAX) text += `\\n${source}`;
+    const footer = e.network || source;
+    let text = cardText(e.network ? e.title.replace(` · ${e.network}`, '') : e.title);
+    if (footer && text.length + 2 + footer.length <= CARD_TEXT_MAX) text += `\\n${footer}`;
     return `https://placehold.co/640x360/${color}/FFFFFF/png?font=oswald&text=${encodeURIComponent(text)}`;
 }
 
@@ -181,19 +183,212 @@ function eventKey(title, start) {
     return `${t}|${Math.round(start / 300000)}`;
 }
 
-function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category || c.attributes?.['group-title'] } = {}) {
+const SPORT_CATEGORY = /sport|football|soccer|f[uú]tbol|basketball|baseball|hockey|tennis|golf|cricket|rugby|boxing|mma|martial|wrestling|motor|racing|cycling|athletics|volleyball|darts|snooker|lacrosse|softball|deportes/i;
+const SPORT_CHANNEL = /sport|espn|\bfs[12]\b|fox soccer|\btnt\b|\btbs\b|nbc ?sports|cbs ?sports|bein|dazn|eurosport|\bnfl\b|nhl network|mlb network|nba tv|big ?ten|\bbtn\b|sec network|acc network|golf|tennis|setanta|\btsn\b|sportsnet|willow|supersport|premier sports|bt ?sport|fight|\bufc\b|racing|\bmsg\b|nesn|marquee|altitude|monumental|root sports|fubo|trutv/i;
+const SPORT_TITLE = /\b(football|soccer|f[uú]tbol|basketball|baseball|hockey|tennis|golf|cricket|rugby|boxing|mma|ufc|wrestling|volleyball|lacrosse|softball|darts|snooker|cycling|nascar|indycar|motogp|formula 1|f1|grand prix|nfl|nba|wnba|mlb|nhl|mls|ncaa|premier league|la ?liga|serie a|bundesliga|ligue 1|champions league|europa league|nations league|world cup)\b/i;
+const NOT_LIVE_TITLE = /\b(highlights?|hl|magazine|show|preview|review|countdown|tonight|today|center|centre|report|update|news|talk|daily|plays of the week|inside|recap|rewind|classics?|best of|replay|encore|pre-?game|post-?game|kickoff|studio|analysis|podcast|documentary|30 for 30|debrief|upcoming)\b|\blive\s*$/i;
+const REPLAY_DESC = /\b(relive|highlights|best of|looks? back|replay|rewind|classic|revisit|from earlier|from last)\b/i;
+const SIDE = "([\\p{Lu}\\p{N}][\\p{L}\\p{N}.'’&/ -]{0,40}?)";
+const VERSUS_RE = new RegExp(`^\\s*(?:[Tt]he\\s+)?${SIDE}\\s+([Vv][Ss]\\.?|[Vv]\\.?|[Aa][Tt]|@)\\s+(?:[Tt]he\\s+)?${SIDE}\\s*(?:[.,:;(]|\\s[-–]\\s|$)`, 'u');
+const RANK = '(?:no\\.?\\s?\\d+\\s+|#\\d+\\s+)?';
+const HOST_RE = new RegExp(`^\\s*(?:the\\s+)?${RANK}${SIDE}\\s+(host|visit|welcome|face|meet|take on)s?\\s+(?:the\\s+)?${RANK}${SIDE}\\s*(?:[.,;(]|\\s(?:at|in|on|for|from)\\s)`, 'iu');
+const MAX_SIDE_WORDS = 5;
+const SPORT_NOUN = '(?:football|soccer|basketball|baseball|hockey|tennis|golf|cricket|rugby|volleyball|softball|lacrosse|darts|snooker|wrestling|boxing|racing|cycling|swimming|athletics|gymnastics|bowling|handball|futsal|motocross|supercross)';
+const GAME_END_RE = new RegExp(`\\b(?:${SPORT_NOUN}|league|cup|championship|open|trophy|series|grand prix|tour|games|race|rally|match|derby|bowl|final|semi-?final|playoffs?)\\s*$`, 'i');
+const GAME_PREFIX_RE = new RegExp(`^(?:${SPORT_NOUN}|formula \\d|f1|motogp|nascar|indycar|ufc \\d+|wwe|aew)\\b\\s*[:,]`, 'i');
+const SERIES_RE = /^(?:formula (?:1|2|3|e)|f1|motogp|moto2|moto3|nascar\b.*|indycar\b.*|supercars|world superbike|ufc \d+.*|ufc fight night.*|pfl\b.*|bellator\b.*|nfl|nba|wnba|mlb|nhl|mls)$/i;
+const SPANISH_GAME_RE = /^(?:f[uú]tbol|baloncesto|b[eé]isbol|tenis)\b.*\b(?:liga|primera|serie|divisi[oó]n|copa|mls|nba|wnba|mlb|nfl|nhl|amistosos?|internacional(?:es)?|argentino|mexicano|uruguayo|brasileir[oã]o|champions|europa|libertadores|sudamericana)\b/i;
+
+function looksLikeGame(title) {
+    const t = title.trim();
+    if (/^the\s/i.test(t)) return false;
+    const head = t.split(/:\s|\s[-–—]\s/)[0];
+    return GAME_END_RE.test(t) || GAME_END_RE.test(head) || GAME_PREFIX_RE.test(t) ||
+        SERIES_RE.test(t) || SERIES_RE.test(head) || SPANISH_GAME_RE.test(t);
+}
+const MERGE_WINDOW_MS = 45 * 60000;
+const GUIDE_BEFORE_MS = 10 * 60000;
+const GUIDE_AHEAD_MS = 70 * 60000;
+
+function cleanSide(s) {
+    return s.replace(/\s*\((?:week|wk|round|rd|game|match|md)[^)]*\)\s*$/i, '').trim();
+}
+
+function validSide(s) {
+    const words = s.split(/\s+/).filter(Boolean);
+    return words.length > 0 && words.length <= MAX_SIDE_WORDS && !NOT_LIVE_TITLE.test(s);
+}
+
+function matchupOf(text) {
+    if (!text) return null;
+    for (const seg of String(text).split(/\s[-–—]\s|:\s/)) {
+        let m = seg.match(VERSUS_RE);
+        if (m) {
+            const a = cleanSide(m[1]);
+            const b = cleanSide(m[3]);
+            if (!validSide(a) || !validSide(b)) continue;
+            const away = /^(at|@)$/i.test(m[2]);
+            return { teams: [a, b], label: away ? `${a} @ ${b}` : `${a} vs ${b}` };
+        }
+        m = seg.match(HOST_RE);
+        if (m) {
+            const a = cleanSide(m[1]);
+            const b = cleanSide(m[3]);
+            if (!validSide(a) || !validSide(b)) continue;
+            const verb = m[2].toLowerCase();
+            if (verb === 'host' || verb === 'welcome') return { teams: [b, a], label: `${b} @ ${a}` };
+            if (verb === 'visit') return { teams: [a, b], label: `${a} @ ${b}` };
+            return { teams: [a, b], label: `${a} vs ${b}` };
+        }
+    }
+    return null;
+}
+
+function teamWords(side) {
+    return side.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+}
+
+function sideMatches(a, b) {
+    const wa = teamWords(a);
+    const wb = teamWords(b);
+    if (!wa.length || !wb.length) return false;
+    return wb.includes(wa[wa.length - 1]) || wa.includes(wb[wb.length - 1]);
+}
+
+function sameMatchup(x, y) {
+    return (sideMatches(x[0], y[0]) && sideMatches(x[1], y[1])) || (sideMatches(x[0], y[1]) && sideMatches(x[1], y[0]));
+}
+
+function networkName(channelName) {
+    return String(channelName || '')
+        .trim()
+        .replace(/^[A-Z]{2,7}\s*[-|:]\s*/, '')
+        .replace(/[◉ᵛᶦᵖ]+/g, '')
+        .replace(/\[[^\]]*\]/g, '')
+        .replace(/\b(UHD|FHD|HD|SD|HEVC|4K|H265)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function networkBrand(network) {
+    const brand = network.replace(/\s+\d+\s+\S.*$/, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+    return brand || network;
+}
+
+function topBrand(counts) {
+    let best = null;
+    for (const [brand, n] of counts) if (!best || n > best[1]) best = [brand, n];
+    return best ? best[0] : null;
+}
+
+function pastYearReplay(desc, now) {
+    const m = String(desc || '').match(/\b(?:from|on|aired|recorded)\s+[A-Z][a-z]{2,8}\.?\s+\d{1,2},\s+((?:19|20)\d{2})\b/);
+    return !!m && parseInt(m[1], 10) < new Date(now).getUTCFullYear();
+}
+
+function guideEvent(p, channelLabel, now = Date.now()) {
+    if (p.r && !p.l) return null;
+    if (!p.l && pastYearReplay(p.d, now)) return null;
+    const title = p.t || '';
+    const sportCat = SPORT_CATEGORY.test((p.c || []).join(' '));
+    const sportTitle = SPORT_TITLE.test(title);
+    const sportChannel = SPORT_CHANNEL.test(channelLabel);
+    if (!sportCat && !sportTitle && !(sportChannel && p.l)) return null;
+    if (!p.l && NOT_LIVE_TITLE.test(title)) return null;
+    if (!p.l && REPLAY_DESC.test(p.d || '')) return null;
+    const matchup = matchupOf(p.st) || matchupOf(title) || matchupOf(p.d);
+    if (!matchup && !p.l && !looksLikeGame(title)) return null;
+    const fromTitle = matchup && title.includes(matchup.teams[0]) && title.includes(matchup.teams[1]);
+    const league = fromTitle
+        ? title.split(/\s[-–—]\s/).filter(s => !s.includes(matchup.teams[0])).join(' – ') || null
+        : (matchup ? title : null);
+    let name = matchup ? matchup.label : title;
+    if (!matchup && p.st && p.st.length <= 50) name = `${title}: ${p.st}`;
+    return { name, league, teams: matchup ? matchup.teams : null };
+}
+
+function addGuideEvents(byKey, slotEvents, epgData, channelsByEpgId, groupOf, now) {
+    for (const [epgId, list] of Object.entries(epgData || {})) {
+        const chans = channelsByEpgId.get(epgId);
+        if (!chans || !Array.isArray(list)) continue;
+        const first = chans[0];
+        const label = `${groupOf(first) || ''} ${first.name || ''} ${epgId}`;
+        for (const p of list) {
+            const start = p.s * 1000;
+            const end = p.e * 1000;
+            if (end <= now - GUIDE_BEFORE_MS || start >= now + GUIDE_AHEAD_MS) continue;
+            const g = guideEvent(p, label, now);
+            if (!g) continue;
+            const src = sourceLabel(groupOf(first));
+            const network = titleCase(networkName(first.name));
+            const links = chans.map(c => ({ id: c.id, slot: (c.name || '').trim(), source: src, logo: c.logo || c.attributes?.['tvg-logo'] || null }));
+            const target = g.teams && slotEvents.find(e => e.teams && Math.abs(e.start - start) <= MERGE_WINDOW_MS && sameMatchup(e.teams, g.teams));
+            if (target) {
+                if (!target.sources.includes(src)) target.sources.push(src);
+                for (const l of links) if (!target.channels.some(c => c.id === l.id)) target.channels.push(l);
+                if (!target.league && g.league) target.league = g.league;
+                continue;
+            }
+            const descSig = (p.st || p.d || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 80);
+            const key = g.teams
+                ? eventKey(g.name, start)
+                : eventKey(descSig ? `${g.name}|${descSig}` : `${g.name} · ${network}`, start);
+            let entry = byKey.get(key);
+            if (!entry) {
+                entry = {
+                    id: 'iptv_ev_' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 16),
+                    title: g.name,
+                    baseName: g.teams ? null : g.name,
+                    league: g.league,
+                    network,
+                    brands: new Map(),
+                    teams: g.teams,
+                    start,
+                    end,
+                    assumedDay: false,
+                    sources: [],
+                    channels: []
+                };
+                byKey.set(key, entry);
+            }
+            for (const c of chans) {
+                const brand = networkBrand(titleCase(networkName(c.name)));
+                if (brand) entry.brands.set(brand, (entry.brands.get(brand) || 0) + 1);
+            }
+            if (!entry.sources.includes(src)) entry.sources.push(src);
+            for (const l of links) if (!entry.channels.some(c => c.id === l.id)) entry.channels.push(l);
+        }
+    }
+    for (const e of byKey.values()) {
+        if (!e.brands) continue;
+        e.network = topBrand(e.brands) || e.network;
+        if (e.baseName) e.title = `${e.baseName} · ${e.network}`;
+        delete e.brands;
+        delete e.baseName;
+    }
+}
+
+function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category || c.attributes?.['group-title'], epgData = null, epgIdOf = null } = {}) {
     const byKey = new Map();
+    const channelsByEpgId = new Map();
     for (const c of channels) {
         if (!c || c.type !== 'tv') continue;
+        const epgId = epgIdOf ? epgIdOf(c) : null;
+        if (epgId) {
+            if (!channelsByEpgId.has(epgId)) channelsByEpgId.set(epgId, []);
+            channelsByEpgId.get(epgId).push(c);
+        }
         const group = groupOf(c) || '';
         const ev = parseEventSlot(c.name, now, group);
         if (!ev) continue;
         const key = eventKey(ev.title, ev.start);
         let entry = byKey.get(key);
         if (!entry) {
+            const title = titleCase(ev.title.replace(NOISE_PARENS, '').trim());
             entry = {
                 id: 'iptv_ev_' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 16),
-                title: titleCase(ev.title.replace(NOISE_PARENS, '').trim()),
+                title,
+                teams: matchupOf(title)?.teams || null,
                 start: ev.start,
                 end: ev.end,
                 assumedDay: ev.day === 'assumed',
@@ -207,6 +402,7 @@ function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category
         if (!entry.sources.includes(src)) entry.sources.push(src);
         entry.channels.push({ id: c.id, slot: ev.slot, source: src, logo: c.logo || c.attributes?.['tvg-logo'] || null });
     }
+    if (epgData) addGuideEvents(byKey, [...byKey.values()], epgData, channelsByEpgId, groupOf, now);
     const byId = new Map();
     for (const e of byKey.values()) byId.set(e.id, e);
     return byId;

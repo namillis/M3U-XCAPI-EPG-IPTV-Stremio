@@ -176,6 +176,7 @@ const EPG_CACHE_PREFIX = 'addon:epg:v2:';
 const CATCHUP_TTL_MS = 5 * 60 * 1000;
 const EVENT_INDEX_TTL_MS = 10 * 60 * 1000;
 const LIVE_NOW_CACHE_S = 60;
+const EVENT_STREAMS_MAX = 25;
 const CATCHUP_CACHE_MAX = 200;
 const EPG_DESC_MAX = 400;
 
@@ -391,9 +392,16 @@ class M3UEPGAddon {
 
     liveEventIndex() {
         const now = Date.now();
-        if (!this.eventIndex || this.eventIndexFor !== this.channels || now - this.eventIndexAt > EVENT_INDEX_TTL_MS) {
-            this.eventIndex = buildEventIndex(this.channels, { now, groupOf: c => this.channelGroup(c) });
+        if (!this.eventIndex || this.eventIndexFor !== this.channels || this.eventIndexEpg !== this.epgData ||
+            now - this.eventIndexAt > EVENT_INDEX_TTL_MS) {
+            this.eventIndex = buildEventIndex(this.channels, {
+                now,
+                groupOf: c => this.channelGroup(c),
+                epgData: this.epgData,
+                epgIdOf: c => c.attributes?.['tvg-id'] || c.attributes?.['tvg-name'] || null
+            });
             this.eventIndexFor = this.channels;
+            this.eventIndexEpg = this.epgData;
             this.eventIndexAt = now;
         }
         return this.eventIndex;
@@ -432,17 +440,24 @@ class M3UEPGAddon {
             name: e.title,
             poster: eventCardUrl(e),
             posterShape: 'landscape',
-            description: `${live ? `🔴 Live now · started ${when}` : `⏰ Starts ${when}`}\n${e.sources.join(' · ')} · ${count} channel${count === 1 ? '' : 's'}`,
+            description: `${live ? `🔴 Live now · started ${when}` : `⏰ Starts ${when}`}\n${[e.league, e.network].filter(Boolean).map(s => s + ' · ').join('')}${e.sources.join(' · ')} · ${count} channel${count === 1 ? '' : 's'}`,
             genres: e.sources,
             runtime: live ? 'Live' : when
         };
+    }
+
+    eventChannels(e) {
+        if (e.channels.length <= EVENT_STREAMS_MAX) return e.channels;
+        return [...e.channels].sort((a, b) => a.slot.length - b.slot.length).slice(0, EVENT_STREAMS_MAX);
     }
 
     getEventMeta(id) {
         const e = this.liveEventIndex().get(id);
         if (!e) return null;
         const meta = this.eventMetaPreview(e);
-        meta.description += '\n\n' + e.channels.map(c => `• ${c.slot}`).join('\n');
+        const shown = this.eventChannels(e);
+        meta.description += '\n\n' + shown.map(c => `• ${c.slot}`).join('\n');
+        if (shown.length < e.channels.length) meta.description += `\n…and ${e.channels.length - shown.length} more`;
         return meta;
     }
 
@@ -450,7 +465,7 @@ class M3UEPGAddon {
         const e = this.liveEventIndex().get(id);
         if (!e) return [];
         const streams = [];
-        for (const ch of e.channels) {
+        for (const ch of this.eventChannels(e)) {
             const stream = this.getStream(ch.id);
             if (stream) streams.push({ ...stream, name: ch.source, title: ch.slot });
         }
@@ -645,9 +660,13 @@ class M3UEPGAddon {
                     const e = toSec(stopAttr);
                     return e > nowS && s <= endS ? [s, e] : null;
                 },
-                onProgramme: (ch, [s, e], title, desc) => {
+                onProgramme: (ch, [s, e], title, desc, extra = {}) => {
                     const p = { s, e, t: title || 'Unknown' };
                     if (desc) p.d = desc;
+                    if (extra.subTitle) p.st = extra.subTitle;
+                    if (extra.categories?.length) p.c = extra.categories;
+                    if (extra.live) p.l = 1;
+                    if (extra.repeat) p.r = 1;
                     (epgData[ch] ||= []).push(p);
                     kept++;
                 }
