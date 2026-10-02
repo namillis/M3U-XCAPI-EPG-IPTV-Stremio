@@ -148,7 +148,8 @@ function createCacheKey(config) {
         groupFilter: config.groupFilter || '',
         includeSeries: config.includeSeries !== false, // default true
         liveOnly: !!config.liveOnly,
-        catchup: !!config.catchup
+        catchup: !!config.catchup,
+        hideAdult: config.hideAdult !== false
     };
     return crypto.createHash('md5').update(stableStringify(minimal)).digest('hex');
 }
@@ -217,6 +218,7 @@ class M3UEPGAddon {
             this.series = cached.series || [];
             this.epgData = cached.epgData || {};
             this.lastUpdate = cached.lastUpdate || 0;
+            this.dropAdult();
             // Direct series episodes index is not persisted; rebuild on next fetch
             this.log.debug('Cache hit for data', {
                 channels: this.channels.length,
@@ -240,6 +242,18 @@ class M3UEPGAddon {
         dataCache.set(cacheKey, entry);
         await redisSetJSON(cacheKey, entry, REDIS_TTL_MS);
         this.log.debug('Saved data to cache');
+    }
+
+    isAdult(i) {
+        const text = `${i.name || ''} ${i.category || i.attributes?.['group-title'] || ''}`;
+        return /xxx/i.test(text);
+    }
+
+    dropAdult() {
+        if (this.config.hideAdult === false) return;
+        this.channels = this.channels.filter(i => !this.isAdult(i));
+        this.movies = this.movies.filter(i => !this.isAdult(i));
+        this.series = this.series.filter(i => !this.isAdult(i));
     }
 
     channelGroup(c) {
@@ -665,6 +679,7 @@ class M3UEPGAddon {
             this.channels = this.channels.filter(i => !isSeparator(i));
             this.movies = this.movies.filter(i => !isSeparator(i));
             this.series = this.series.filter(i => !isSeparator(i));
+            this.dropAdult();
             this.lastUpdate = Date.now();
             if (CACHE_ENABLED) await this.saveToCache();
             this.buildGenresInManifest();
