@@ -34,7 +34,7 @@ function extractSeasonEpisode(title) {
     return null;
 }
 
-async function fetchData(addonInstance) {
+async function fetchData(addonInstance, { epg = true } = {}) {
     const { config } = addonInstance;
     const { m3uUrl } = config;
 
@@ -44,7 +44,7 @@ async function fetchData(addonInstance) {
     addonInstance.movies = [];
     addonInstance.series = [];
     addonInstance.directSeriesEpisodeIndex = new Map(); // reset
-    addonInstance.epgData = {};
+    if (epg) addonInstance.epgData = {};
 
     // Fetch playlist
     let playlistText;
@@ -126,7 +126,7 @@ async function fetchData(addonInstance) {
     }
 
     // EPG (optional)
-    if (config.enableEpg && config.epgUrl) {
+    if (epg && config.enableEpg && config.epgUrl) {
         try {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 45000);
