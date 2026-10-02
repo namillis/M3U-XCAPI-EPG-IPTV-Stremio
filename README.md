@@ -279,6 +279,7 @@ curl -X POST http://localhost:7000/api/prefetch \
 | `SITE_PASSWORD` | unset | Password for the setup pages and `/api/*` (HTTP Basic auth, any username) |
 | `CACHE_ENABLED` | `true` | Master toggle for LRU + Redis |
 | `CACHE_TTL_MS` | `21600000` (6h) | TTL for cached data |
+| `EPG_REFRESH_MS` | `21600000` (6h) | How often the guide is re-downloaded (channels refresh hourly) |
 | `MAX_CACHE_ENTRIES` | `300` | LRU entry cap |
 | `CONFIG_SECRET` | unset | 16+ chars. Config UI encrypts install links with it (AES-256-GCM) |
 | `DEBUG_MODE` | `false` | Enables verbose diagnostic logs |
@@ -456,7 +457,7 @@ A: The proxy tries multiple templates; contribute additional logo source pattern
 A: It’s a compact base64url JSON (or an encrypted blob when `CONFIG_SECRET` is set). Stremio handles it fine.
 
 **Q: Do channels and the guide update by themselves?**  
-A: Yes. The install link only holds your settings. The server re-downloads channels and the guide about every hour while you use it, so you only reinstall after changing a setting.
+A: Yes. The install link only holds your settings. While you use it, the server re-downloads channels about every hour and the guide every 6 hours (the guide holds 36 hours ahead), so you only reinstall after changing a setting.
 
 **Q: Series episodes missing (M3U).**  
 A: Ensure naming matches patterns (`S01E01` or `Season 1 Episode 1`). Heuristic grouping cannot infer arbitrary naming.

@@ -5,9 +5,11 @@ require('dotenv').config();
 const { addonBuilder } = require("stremio-addon-sdk");
 const crypto = require("crypto");
 const LRUCache = require("./lruCache");
+const { parseXmltvStream } = require("./epgParser");
 const { version: ADDON_VERSION } = require("./package.json");
 const fetch = require('node-fetch');
 const zlib = require('zlib');
+const { once } = require('events');
 const { promisify } = require('util');
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
@@ -54,6 +56,62 @@ function withTimeout(promise, ms) {
         promise,
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), ms); })
     ]).finally(() => clearTimeout(timer));
+}
+
+const yieldToLoop = () => new Promise(setImmediate);
+const GUIDE_LINES_PER_YIELD = 200;
+
+async function redisSetGuide(key, epgData, lastEpgUpdate, ttl) {
+    if (!redisClient) return;
+    try {
+        const gz = zlib.createGzip();
+        const parts = [];
+        gz.on('data', c => parts.push(c));
+        const finished = new Promise((resolve, reject) => { gz.on('end', resolve); gz.on('error', reject); });
+        gz.write(JSON.stringify({ lastEpgUpdate }) + '\n');
+        let lines = 0;
+        for (const ch in epgData) {
+            if (!gz.write(JSON.stringify([ch, epgData[ch]]) + '\n')) await once(gz, 'drain');
+            if (++lines % GUIDE_LINES_PER_YIELD === 0) await yieldToLoop();
+        }
+        gz.end();
+        await finished;
+        const packed = Buffer.concat(parts);
+        if (packed.length > REDIS_MAX_BYTES) {
+            console.warn(`[REDIS] Skipped guide save: ${(packed.length / 1048576).toFixed(1)} MB compressed is over the ${(REDIS_MAX_BYTES / 1048576).toFixed(1)} MB limit`);
+            return;
+        }
+        await withTimeout(redisClient.set(key, packed, 'PX', ttl), REDIS_TIMEOUT_MS * 3);
+        console.log(`[REDIS] Saved guide ${(packed.length / 1024).toFixed(0)} KB`);
+    } catch (e) {
+        console.warn('[REDIS] Guide save failed:', e.message);
+    }
+}
+
+async function redisGetGuide(key) {
+    if (!redisClient) return null;
+    try {
+        const raw = await withTimeout(redisClient.getBuffer(key), REDIS_TIMEOUT_MS);
+        if (!raw || !raw.length) return null;
+        const text = await gunzip(raw);
+        let pos = text.indexOf(10);
+        if (pos === -1) return null;
+        const { lastEpgUpdate } = JSON.parse(text.toString('utf8', 0, pos));
+        const epgData = {};
+        let lines = 0;
+        while (++pos < text.length) {
+            let end = text.indexOf(10, pos);
+            if (end === -1) end = text.length;
+            const [ch, list] = JSON.parse(text.toString('utf8', pos, end));
+            epgData[ch] = list;
+            pos = end;
+            if (++lines % GUIDE_LINES_PER_YIELD === 0) await yieldToLoop();
+        }
+        return { epgData, lastEpgUpdate };
+    } catch (e) {
+        console.warn('[REDIS] Guide read failed:', e.message);
+        return null;
+    }
 }
 
 const ADDON_NAME = "M3U/EPG TV Addon";
@@ -111,8 +169,9 @@ const SEPARATOR_RE = /^\s*[#=*\-_~|]{3,}.*[#=*\-_~|]{3,}\s*$/;
 function isSeparator(item) {
     return !!item && typeof item.name === 'string' && SEPARATOR_RE.test(item.name);
 }
-const EPG_PAST_MS = 3 * 3600000;
 const EPG_FUTURE_MS = 36 * 3600000;
+const EPG_REFRESH_MS = parseInt(process.env.EPG_REFRESH_MS || (6 * 3600 * 1000).toString(), 10);
+const EPG_CACHE_PREFIX = 'addon:epg:v2:';
 const CATCHUP_TTL_MS = 5 * 60 * 1000;
 const CATCHUP_CACHE_MAX = 200;
 const EPG_DESC_MAX = 400;
@@ -171,6 +230,7 @@ class M3UEPGAddon {
         this.catchupCache = new Map();
         this.epgData = {};
         this.lastUpdate = 0;
+        this.lastEpgUpdate = 0;
         this.log = makeLogger(config.debug);
 
         // Direct provider may populate this (seriesId -> episodes array)
@@ -209,8 +269,21 @@ class M3UEPGAddon {
         const cacheKey = 'addon:data:' + this.cacheKey;
         let cached = dataCache.get(cacheKey);
         if (!cached && redisClient) {
-            cached = await redisGetJSON(cacheKey);
-            if (cached) dataCache.set(cacheKey, cached);
+            const [data, epg] = await Promise.all([
+                redisGetJSON(cacheKey),
+                redisGetGuide(EPG_CACHE_PREFIX + this.cacheKey)
+            ]);
+            if (data) {
+                cached = {
+                    channels: data.channels,
+                    movies: data.movies,
+                    series: data.series,
+                    lastUpdate: data.lastUpdate,
+                    epgData: epg?.epgData || {},
+                    lastEpgUpdate: epg?.lastEpgUpdate || 0
+                };
+                dataCache.set(cacheKey, cached);
+            }
         }
         if (cached) {
             this.channels = cached.channels || [];
@@ -218,6 +291,7 @@ class M3UEPGAddon {
             this.series = cached.series || [];
             this.epgData = cached.epgData || {};
             this.lastUpdate = cached.lastUpdate || 0;
+            this.lastEpgUpdate = cached.lastEpgUpdate || 0;
             this.dropAdult();
             // Direct series episodes index is not persisted; rebuild on next fetch
             this.log.debug('Cache hit for data', {
@@ -229,19 +303,21 @@ class M3UEPGAddon {
         }
     }
 
-    async saveToCache() {
+    async saveToCache(epgChanged) {
         if (!CACHE_ENABLED) return;
         const cacheKey = 'addon:data:' + this.cacheKey;
-        const entry = {
+        const lists = {
             channels: this.channels,
             movies: this.movies,
             series: this.series,
-            epgData: this.epgData,
             lastUpdate: this.lastUpdate
         };
-        dataCache.set(cacheKey, entry);
-        await redisSetJSON(cacheKey, entry, REDIS_TTL_MS);
-        this.log.debug('Saved data to cache');
+        dataCache.set(cacheKey, { ...lists, epgData: this.epgData, lastEpgUpdate: this.lastEpgUpdate });
+        await redisSetJSON(cacheKey, lists, REDIS_TTL_MS);
+        if (epgChanged) {
+            await redisSetGuide(EPG_CACHE_PREFIX + this.cacheKey, this.epgData, this.lastEpgUpdate, REDIS_TTL_MS);
+        }
+        this.log.debug('Saved data to cache', { epgChanged: !!epgChanged });
     }
 
     isAdult(i) {
@@ -471,71 +547,51 @@ class M3UEPGAddon {
         return ids;
     }
 
-    parseEPGStream(stream) {
-        const sax = require('sax');
+    async parseEPGStream(stream) {
         const start = Date.now();
         const wanted = this.epgWantedChannels();
-        const now = Date.now();
-        const windowStart = now - EPG_PAST_MS;
-        const windowEnd = now + EPG_FUTURE_MS;
+        const nowS = Math.floor(start / 1000);
+        const endS = Math.floor((start + EPG_FUTURE_MS) / 1000);
+        const timeCache = new Map();
+        const toSec = (s) => {
+            let v = timeCache.get(s);
+            if (v === undefined) {
+                v = Math.floor(this.epgTimeMs(s) / 1000);
+                if (timeCache.size > 50000) timeCache.clear();
+                timeCache.set(s, v);
+            }
+            return v;
+        };
         const epgData = {};
         let kept = 0, seen = 0;
-        let prog = null, field = null;
-
-        return new Promise((resolve) => {
-            const parser = sax.createStream(true, { trim: false });
-            parser.on('opentag', (node) => {
-                if (node.name === 'programme') {
-                    seen++;
-                    const ch = node.attributes.channel;
-                    if (!ch || (wanted.size && !wanted.has(ch))) return;
-                    const stopMs = this.parseEPGTime(node.attributes.stop).getTime();
-                    const startMs = this.parseEPGTime(node.attributes.start).getTime();
-                    if (stopMs < windowStart || startMs > windowEnd) return;
-                    prog = { ch, start: node.attributes.start, stop: node.attributes.stop, title: '', desc: '' };
-                } else if (prog && (node.name === 'title' || node.name === 'desc')) {
-                    field = prog[node.name] ? null : node.name;
-                }
-            });
-            const onText = (t) => {
-                if (prog && field && prog[field].length < EPG_DESC_MAX) prog[field] += t;
-            };
-            parser.on('text', onText);
-            parser.on('cdata', onText);
-            parser.on('closetag', (name) => {
-                if (name === 'title' || name === 'desc') field = null;
-                else if (name === 'programme' && prog) {
-                    (epgData[prog.ch] ||= []).push({
-                        start: prog.start,
-                        stop: prog.stop,
-                        title: prog.title.trim().slice(0, EPG_DESC_MAX) || 'Unknown',
-                        desc: prog.desc.trim().slice(0, EPG_DESC_MAX)
-                    });
+        try {
+            ({ seen } = await parseXmltvStream(stream, {
+                maxText: EPG_DESC_MAX,
+                accept: (ch, startAttr, stopAttr) => {
+                    if (wanted.size && !wanted.has(ch)) return null;
+                    const s = toSec(startAttr);
+                    const e = toSec(stopAttr);
+                    return e > nowS && s <= endS ? [s, e] : null;
+                },
+                onProgramme: (ch, [s, e], title, desc) => {
+                    const p = { s, e, t: title || 'Unknown' };
+                    if (desc) p.d = desc;
+                    (epgData[ch] ||= []).push(p);
                     kept++;
-                    prog = null;
                 }
-            });
-            parser.on('error', () => {
-                parser._parser.error = null;
-                parser._parser.resume();
-            });
-            const done = () => {
-                this.log.debug('EPG stream parsed', {
-                    channels: Object.keys(epgData).length,
-                    programmesSeen: seen,
-                    programmesKept: kept,
-                    wantedChannels: wanted.size,
-                    ms: Date.now() - start
-                });
-                resolve(epgData);
-            };
-            parser.on('end', done);
-            stream.on('error', (e) => {
-                this.log.warn('EPG stream error', e.message);
-                done();
-            });
-            stream.pipe(parser);
+            }));
+        } catch (e) {
+            this.log.warn('EPG stream error', e.message);
+        }
+        for (const list of Object.values(epgData)) list.sort((a, b) => a.s - b.s);
+        this.log.debug('EPG stream parsed', {
+            channels: Object.keys(epgData).length,
+            programmesSeen: seen,
+            programmesKept: kept,
+            wantedChannels: wanted.size,
+            ms: Date.now() - start
         });
+        return epgData;
     }
 
     tzOffsetMs(utcMs) {
@@ -563,9 +619,10 @@ class M3UEPGAddon {
         return date.toLocaleTimeString([], opts);
     }
 
-    parseEPGTime(s) {
-        if (!s) return new Date();
+    epgTimeMs(s) {
+        if (!s) return NaN;
         const m = s.match(/^(\d{14})(?:\s*([+\-]\d{4}))?/);
+        let ms;
         if (m) {
             const base = m[1];
             const tz = m[2] || null;
@@ -575,56 +632,57 @@ class M3UEPGAddon {
             const hour = parseInt(base.slice(8, 10), 10);
             const min = parseInt(base.slice(10, 12), 10);
             const sec = parseInt(base.slice(12, 14), 10);
-            let date;
-            const useZone = this.timezone && (!tz || this.config.epgLocalTimes);
-            if (useZone) {
-                date = this.zonedTimeToDate(year, month, day, hour, min, sec);
+            if (this.timezone && (!tz || this.config.epgLocalTimes)) {
+                ms = this.zonedTimeToDate(year, month, day, hour, min, sec).getTime();
             } else if (tz) {
-                const iso = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}T${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}${tz}`;
-                const parsed = new Date(iso);
-                if (!isNaN(parsed.getTime())) date = parsed;
+                const sign = tz[0] === '-' ? -1 : 1;
+                const offMin = sign * (parseInt(tz.slice(1, 3), 10) * 60 + parseInt(tz.slice(3, 5), 10));
+                ms = Date.UTC(year, month, day, hour, min, sec) - offMin * 60000;
+            } else {
+                ms = new Date(year, month, day, hour, min, sec).getTime();
             }
-            if (!date) date = new Date(year, month, day, hour, min, sec);
-            if (this.config.epgOffsetHours) {
-                date = new Date(date.getTime() + this.config.epgOffsetHours * 3600000);
-            }
-            return date;
+        } else {
+            ms = new Date(s).getTime();
         }
-        const d = new Date(s);
-        if (this.config.epgOffsetHours && !isNaN(d.getTime()))
-            return new Date(d.getTime() + this.config.epgOffsetHours * 3600000);
-        return d;
+        return this.config.epgOffsetHours ? ms + this.config.epgOffsetHours * 3600000 : ms;
+    }
+
+    parseEPGTime(s) {
+        return s ? new Date(this.epgTimeMs(s)) : new Date();
+    }
+
+    epgList(channelId) {
+        return channelId && Object.hasOwn(this.epgData, channelId) ? this.epgData[channelId] : null;
+    }
+
+    epgProgram(p) {
+        const startTime = new Date(p.s * 1000);
+        const stopTime = new Date(p.e * 1000);
+        return { title: p.t, description: p.d || '', start: startTime, stop: stopTime, startTime, stopTime };
     }
 
     getCurrentProgram(channelId) {
-        if (!channelId || !this.epgData[channelId]) return null;
-        const now = new Date();
-        for (const p of this.epgData[channelId]) {
-            const start = this.parseEPGTime(p.start);
-            const stop = this.parseEPGTime(p.stop);
-            if (now >= start && now <= stop) {
-                return { title: p.title, description: p.desc, start, stop, startTime: start, stopTime: stop };
-            }
+        const list = this.epgList(channelId);
+        if (!list) return null;
+        const now = Date.now() / 1000;
+        for (const p of list) {
+            if (p.s > now) break;
+            if (now <= p.e) return this.epgProgram(p);
         }
         return null;
     }
 
     getUpcomingPrograms(channelId, limit = 5) {
-        if (!channelId || !this.epgData[channelId]) return [];
-        const now = new Date();
+        const list = this.epgList(channelId);
+        if (!list) return [];
+        const now = Date.now() / 1000;
         const upcoming = [];
-        for (const p of this.epgData[channelId]) {
-            const start = this.parseEPGTime(p.start);
-            if (start > now && upcoming.length < limit) {
-                upcoming.push({
-                    title: p.title,
-                    description: p.desc,
-                    startTime: start,
-                    stopTime: this.parseEPGTime(p.stop)
-                });
-            }
+        for (const p of list) {
+            if (p.s <= now) continue;
+            upcoming.push(this.epgProgram(p));
+            if (upcoming.length >= limit) break;
         }
-        return upcoming.sort((a, b) => a.startTime - b.startTime);
+        return upcoming;
     }
 
     async ensureSeriesInfo(seriesId) {
@@ -647,17 +705,25 @@ class M3UEPGAddon {
         return empty;
     }
 
+    hasEpg() {
+        for (const _ in this.epgData) return true;
+        return false;
+    }
+
+    epgDue(now = Date.now()) {
+        if (!this.config.enableEpg) return false;
+        const interval = this.hasEpg() ? EPG_REFRESH_MS : this.updateInterval;
+        return now - (this.lastEpgUpdate || 0) >= interval;
+    }
+
+    needsRefresh(now = Date.now()) {
+        return !this.lastUpdate || now - this.lastUpdate >= this.updateInterval || this.epgDue(now);
+    }
+
     async updateData(force = false) {
-        const now = Date.now();
-        if (!force && CACHE_ENABLED) {
-            if (this.lastUpdate && now - this.lastUpdate < this.updateInterval) {
-                this.log.debug('Skip update (global interval)');
-                return;
-            }
-            if ((this.channels.length || this.movies.length || this.series.length) && now - this.lastUpdate < 900000) {
-                this.log.debug('Skip update (recent minor interval)');
-                return;
-            }
+        if (!force && CACHE_ENABLED && !this.needsRefresh()) {
+            this.log.debug('Skip update (fresh)');
+            return;
         }
         if (this.updatePromise) return this.updatePromise;
         this.updatePromise = this.runUpdate().finally(() => { this.updatePromise = null; });
@@ -668,25 +734,32 @@ class M3UEPGAddon {
         try {
             const start = Date.now();
             const providerModule = require(`./src/js/providers/${this.providerName}Provider.js`);
+            const refreshEpg = this.epgDue(start);
             const staged = Object.create(this);
             staged.channels = [];
             staged.movies = [];
             staged.series = [];
-            staged.epgData = {};
+            staged.epgData = refreshEpg ? {} : this.epgData;
             staged.directSeriesEpisodeIndex = new Map();
-            await providerModule.fetchData(staged);
+            await providerModule.fetchData(staged, { epg: refreshEpg });
+            if (refreshEpg && !staged.hasEpg() && this.hasEpg()) {
+                this.log.warn('[UPDATE] Guide came back empty, keeping the previous one');
+                staged.epgData = this.epgData;
+            }
             for (const key of Object.keys(staged)) this[key] = staged[key];
             this.channels = this.channels.filter(i => !isSeparator(i));
             this.movies = this.movies.filter(i => !isSeparator(i));
             this.series = this.series.filter(i => !isSeparator(i));
             this.dropAdult();
             this.lastUpdate = Date.now();
-            if (CACHE_ENABLED) await this.saveToCache();
+            if (refreshEpg) this.lastEpgUpdate = this.lastUpdate;
+            if (CACHE_ENABLED) await this.saveToCache(refreshEpg);
             this.buildGenresInManifest();
             this.log.debug('Data update complete', {
                 channels: this.channels.length,
                 movies: this.movies.length,
                 series: this.series.length,
+                epgRefreshed: refreshEpg,
                 ms: Date.now() - start
             });
         } catch (e) {
@@ -995,7 +1068,7 @@ async function createAddon(config) {
         await addonInstance.loadFromCache();
         try {
             const hasData = addonInstance.channels.length || addonInstance.movies.length || addonInstance.series.length;
-            const stale = !addonInstance.lastUpdate || (Date.now() - addonInstance.lastUpdate > addonInstance.updateInterval);
+            const stale = addonInstance.needsRefresh();
             if (!hasData) {
                 await addonInstance.updateData(true);
             } else if (stale) {
