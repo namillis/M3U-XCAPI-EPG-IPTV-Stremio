@@ -118,93 +118,6 @@ Then open: `http://localhost:7000/`
 
 ---
 
-## ☁️ Free Hosting on Render
-
-[Render](https://render.com)'s free web service tier runs this addon at no cost and without a credit card. You get an `https://<name>.onrender.com` URL with HTTPS included, which Stremio requires for remote addons.
-
-### Deploy
-
-1. Fork this repo on GitHub.
-2. Sign up at [render.com](https://render.com) with your GitHub account.
-3. Click **New +** → **Web Service** and pick your fork.
-4. Use these settings:
-
-   | Setting | Value |
-   |---------|-------|
-   | Runtime | `Node` |
-   | Branch | `main` |
-   | Build Command | `npm install` |
-   | Start Command | `npm start` |
-   | Instance Type | `Free` |
-   | Health Check Path | `/health` (under **Advanced**) |
-
-5. Under **Advanced**, add environment variables:
-
-   | Variable | Value |
-   |----------|-------|
-   | `CONFIG_SECRET` | A long random string, e.g. from `openssl rand -hex 32`. Encrypts your credentials in the manifest URL. |
-   | `DEBUG_MODE` | `false` |
-   | `CACHE_ENABLED` | `true` |
-   | `PREFETCH_ENABLED` | `true` |
-   | `SITE_PASSWORD` | Optional. Locks the setup pages behind a password (see below). |
-   | `REDIS_URL` | Optional. Free Upstash Redis URL so restarts and deploys load instantly (see below). |
-
-   Don't set `PORT`. Render injects its own, and the server reads `process.env.PORT`.
-
-6. Click **Create Web Service**. When the logs show it's live, open `https://<name>.onrender.com/`, configure your source, and install the addon in Stremio.
-
-Render redeploys automatically whenever you push to your fork. To pull in upstream changes, use **Sync fork** on GitHub.
-
-### Keeping it awake (UptimeRobot or cron-job.org)
-
-A free Render service spins down after 15 minutes without incoming HTTP requests. The next request waits about a minute for it to start again, so Stremio shows empty or slow catalogs at first. Each spin-down also clears the in-memory cache, so the channel list and EPG are downloaded again from your provider on every wake.
-
-To prevent this, have a free external service request `/health` more often than every 15 minutes. `/health` returns a small JSON body and never contacts your IPTV provider, so the pings add no load there. Set up one of these (you only need one):
-
-**UptimeRobot** (recommended): free plan with 50 monitors, 5-minute checks, and an email alert if the addon goes down.
-1. Sign up at [uptimerobot.com](https://uptimerobot.com).
-2. Click **New monitor** and choose **HTTP(s)**.
-3. URL: `https://<name>.onrender.com/health`
-4. Interval: 5 minutes.
-
-**cron-job.org**: free and can run as often as every minute, but has no real alerting.
-1. Sign up at [cron-job.org](https://cron-job.org) and create a cronjob.
-2. URL: `https://<name>.onrender.com/health`
-3. Schedule: every 10 minutes.
-
-cron-job.org gives up on a request after 30 seconds. If a ping lands while the service is still waking, that run shows as failed. This is harmless, and the next run succeeds.
-
-### Site password
-
-Your Render URL is public, so anyone who finds it could use your setup pages and the server's playlist fetcher. Set `SITE_PASSWORD` on Render and the browser asks for it (any username, this password) on:
-
-- the home and setup pages, including Stremio's **Configure** button
-- `/api/*` and `/encrypt`
-
-The addon itself (`/<token>/manifest.json`, catalogs, streams, logos), `/health` and the CSS/JS/icon files stay open, because Stremio and UptimeRobot can't send a password. Ten wrong attempts from one IP lock it out for 15 minutes.
-
-### Free Redis cache (Upstash)
-
-Without Redis, every deploy or restart wipes the cache, and the first Stremio request waits while the server downloads your whole channel list and guide again. With Redis, the server loads the last copy instantly and refreshes it in the background.
-
-1. Sign up at [upstash.com](https://upstash.com) (free, no card).
-2. Create a **Redis** database on the free plan. Pick the region closest to your Render service, e.g. US East (N. Virginia) for Render's Virginia region.
-3. Copy the connection URL that starts with `rediss://` (two s's, it uses TLS).
-4. On Render, add it as `REDIS_URL` and save. Render redeploys.
-5. Open your site. The home page shows **Redis cache connected** when it's working.
-
-The free plan (256 MB storage, 500K commands a month, 10 MB per request) is plenty: the addon stores one gzip-compressed copy per configuration and writes it about once an hour. If a compressed copy is over 9.5 MB the save is skipped and logged, and the addon keeps working from memory. **Live TV only** keeps it well under that.
-
-### Render free tier notes
-
-- **Instance hours:** Render gives 750 free hours per workspace per month, shared by all free services. A month has 720-744 hours, so one service kept awake uses almost the whole pool. Keep only one free service awake, or they'll all be suspended until the next month.
-- **Don't ping `/robots.txt`:** while the service is asleep, Render answers that path itself. The check passes but the service never wakes.
-- **512 MB RAM:** very large playlists or EPGs can still run out of memory. If Render reports "Ran out of memory", enable **Live TV only** or use a smaller custom EPG.
-- **Datacenter IP blocks:** some IPTV providers block cloud IPs. If the config page can't load your playlist on Render but it loads at home, that's the likely cause, and every cloud host will behave the same way.
-- **Occasional cold starts:** deploys and Render's own restarts of free instances still cause a cold start now and then, even with a keep-alive.
-
----
-
 ## 🏗️ Free Self-Hosting on Oracle Cloud
 
 Oracle Cloud's Always Free tier includes an ARM VM that runs this addon around the clock at no cost. It never sleeps, so there are no cold starts and no keep-alive pings. In exchange you run the VM yourself: [Caddy](https://caddyserver.com) provides HTTPS, Redis runs next to the addon, and a small timer redeploys when you push to your fork.
@@ -297,11 +210,9 @@ SITE_PASSWORD=<optional>
 CACHE_ENABLED=true
 DEBUG_MODE=false
 REDIS_URL=redis://redis:6379
-EPG_REFRESH_MS=3600000
 ```
 
 - Don't set `PORT`. Caddy expects the default `7000`.
-- `EPG_REFRESH_MS=3600000` refreshes the guide hourly instead of every 6 hours. The VM has the memory for it. Leave it out to keep the default.
 - Local Redis has no 10 MB request limit, so you can raise `REDIS_MAX_BYTES` if the guide save is skipped in the logs.
 
 Start everything and check that Caddy gets a certificate:
@@ -385,12 +296,14 @@ sudo systemctl enable --now stack-autodeploy.timer
 
 Logs are in `journalctl -u stack-autodeploy`. There is no automatic rollback: if a deploy breaks the addon, revert the commit on GitHub and the VM deploys the revert. Make changes through GitHub, not in the VM's checkout, or the fast-forward stops.
 
-### Moving from Render
+### Site password
 
-- Use the same `CONFIG_SECRET` as on Render. Your existing manifest URL then keeps working on the VM once you swap in the new hostname, so you don't have to configure the addon again.
-- Install the addon on the new hostname in Stremio and check that channels, streams and the guide load before you switch your other devices.
-- Point UptimeRobot at the new `/health` if you want down alerts. The VM doesn't need keep-alive pings.
-- Once the VM has worked for a while, suspend the Render service. If you used Upstash for Redis, you can delete that database too.
+Your addon URL is public, so anyone who finds it could use your setup pages and the server's playlist fetcher. Set `SITE_PASSWORD` in `iptv.env` and the browser asks for it (any username, this password) on:
+
+- the home and setup pages, including Stremio's **Configure** button
+- `/api/*` and `/encrypt`
+
+The addon itself (`/<token>/manifest.json`, catalogs, streams, logos), `/health` and the CSS/JS/icon files stay open, because Stremio and uptime monitors can't send a password. Ten wrong attempts from one IP lock it out for 15 minutes.
 
 ### Oracle free tier notes
 
@@ -468,13 +381,13 @@ curl -X POST http://localhost:7000/api/prefetch \
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PORT` | `7000` | HTTP server port |
-| `REDIS_URL` | unset | Redis for the channel/guide cache, e.g. Upstash `rediss://...` |
+| `REDIS_URL` | unset | Redis for the channel/guide cache, e.g. `redis://redis:6379` |
 | `REDIS_TTL_MS` | `86400000` (24h) | How long a cached copy lives in Redis |
-| `REDIS_MAX_BYTES` | `9961472` (9.5 MB) | Skip saving copies larger than this after gzip (Upstash free limit is 10 MB per request) |
+| `REDIS_MAX_BYTES` | `9961472` (9.5 MB) | Skip saving copies larger than this after gzip (managed Redis plans often limit requests to 10 MB) |
 | `SITE_PASSWORD` | unset | Password for the setup pages and `/api/*` (HTTP Basic auth, any username) |
 | `CACHE_ENABLED` | `true` | Master toggle for LRU + Redis |
 | `CACHE_TTL_MS` | `21600000` (6h) | TTL for cached data |
-| `EPG_REFRESH_MS` | `21600000` (6h) | How often the guide is re-downloaded (channels refresh hourly) |
+| `EPG_REFRESH_MS` | `3600000` (1h) | How often the guide is re-downloaded (channels refresh hourly) |
 | `MAX_CACHE_ENTRIES` | `300` | LRU entry cap |
 | `CONFIG_SECRET` | unset | 16+ chars. Config UI encrypts install links with it (AES-256-GCM) |
 | `DEBUG_MODE` | `false` | Enables verbose diagnostic logs |
