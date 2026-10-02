@@ -13,7 +13,7 @@ const NOISE_PARENS = /\s*\((?:ESP|ESPAÑOL|ESPANOL|SPANISH|PORTUGUÊS|PORTUGUES|
 const ACRONYMS = new Set(['UFC', 'NFL', 'NHL', 'NBA', 'MLB', 'MLS', 'WNBA', 'NCAA', 'NCAAF', 'NCAAB', 'ATP', 'WTA', 'PGA', 'LPGA', 'F1', 'F2', 'F3',
     'WRC', 'IMSA', 'UCI', 'AEW', 'WWE', 'PFL', 'BMX', 'MMA', 'PPV', 'TV', 'FC', 'SC', 'AFC', 'CF', 'KR', 'II', 'III', 'IV', 'US', 'USA', 'UK',
     'UEFA', 'FIFA', 'PDC', 'BKFC', 'MPC', 'VPRC', 'SNF', 'MNF', 'TNF', 'ODI', 'T20', 'NY', 'LA', 'PSG', 'RB', 'AC', 'CBS', 'ESPN', 'ESPN2', 'ESPNU', 'NJ',
-    'UC', 'VCU', 'UCLA', 'USC', 'LSU', 'TCU', 'SMU', 'BYU', 'UCF', 'UNLV', 'UTEP', 'UTSA', 'FIU', 'FAU', 'UAB', 'UNC', 'NC', 'UIC', 'NJIT', 'SIU', 'UMBC', 'CSU', 'FGCU']);
+    'UC', 'VCU', 'UCLA', 'USC', 'LSU', 'TCU', 'SMU', 'BYU', 'UCF', 'UNLV', 'UTEP', 'UTSA', 'FIU', 'FAU', 'UAB', 'UNC', 'NC', 'UIC', 'NJIT', 'SIU', 'UMBC', 'CSU', 'FGCU', 'SEC', 'ACC', 'AAC', 'MAC', 'CAA', 'NEC', 'SWAC', 'MEAC']);
 
 const DEFAULT_DURATION_MS = 3 * 3600000;
 const DURATIONS = [
@@ -23,6 +23,9 @@ const DURATIONS = [
 ];
 const SOON_MS = 60 * 60000;
 const EARLY_MS = 15 * 60000;
+const CARD_COLORS = ['1e3a8a', '7f1d1d', '14532d', '581c87', '78350f', '134e4a', '312e81', '831843'];
+const CARD_LINE = 24;
+const CARD_TEXT_MAX = 58;
 
 const offsetCache = new Map();
 function tzOffsetMs(zone, utcMs) {
@@ -140,6 +143,39 @@ function parseEventSlot(name, now, hintText = '') {
     return { slot, title, start, end: start + durationFor(title), day };
 }
 
+function wrapLines(text, width) {
+    const lines = [];
+    let line = '';
+    for (const word of text.replace(/ +([–—-]) +/g, '\u00a0$1 ').split(/ +/).filter(Boolean)) {
+        if (line && line.length + 1 + word.length > width) {
+            lines.push(line);
+            line = word;
+        } else {
+            line = line ? `${line} ${word}` : word;
+        }
+    }
+    if (line) lines.push(line);
+    return lines;
+}
+
+function cardText(title) {
+    const words = title.split(/ +/).filter(Boolean);
+    let text = wrapLines(title, CARD_LINE).join('\\n');
+    while (text.length > CARD_TEXT_MAX && words.length > 1) {
+        words.pop();
+        text = wrapLines(words.join(' ') + '…', CARD_LINE).join('\\n');
+    }
+    return text.slice(0, CARD_TEXT_MAX).replace(/\\+$/, '');
+}
+
+function eventCardUrl(e) {
+    const source = e.sources[0] || '';
+    const color = CARD_COLORS[parseInt(crypto.createHash('md5').update(source).digest('hex').slice(0, 6), 16) % CARD_COLORS.length];
+    let text = cardText(e.title);
+    if (source && text.length + 2 + source.length <= CARD_TEXT_MAX) text += `\\n${source}`;
+    return `https://placehold.co/640x360/${color}/FFFFFF/png?font=oswald&text=${encodeURIComponent(text)}`;
+}
+
 function eventKey(title, start) {
     const t = title.toUpperCase().replace(NOISE_PARENS, '').replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
     return `${t}|${Math.round(start / 300000)}`;
@@ -196,4 +232,4 @@ function currentEvents(index, now = Date.now(), { source = null, includeAssumed 
     return [...live, ...soon];
 }
 
-module.exports = { parseEventSlot, buildEventIndex, currentEvents, eventState, titleCase, sourceLabel };
+module.exports = { parseEventSlot, buildEventIndex, currentEvents, eventState, eventCardUrl, titleCase, sourceLabel };

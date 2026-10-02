@@ -6,7 +6,7 @@ const { addonBuilder } = require("stremio-addon-sdk");
 const crypto = require("crypto");
 const LRUCache = require("./lruCache");
 const { parseXmltvStream } = require("./epgParser");
-const { buildEventIndex, currentEvents, eventState } = require("./liveEvents");
+const { buildEventIndex, currentEvents, eventState, eventCardUrl } = require("./liveEvents");
 const { version: ADDON_VERSION } = require("./package.json");
 const fetch = require('node-fetch');
 const zlib = require('zlib');
@@ -425,13 +425,12 @@ class M3UEPGAddon {
     eventMetaPreview(e, now = Date.now()) {
         const when = this.formatEventTime(e.start, now);
         const live = eventState(e, now) === 'live';
-        const logo = e.channels.find(c => c.logo)?.logo;
         const count = e.channels.length;
         return {
             id: e.id,
             type: 'tv',
             name: e.title,
-            poster: logo || `https://placehold.co/480x270/333333/FFFFFF/png?text=${encodeURIComponent(e.title)}`,
+            poster: eventCardUrl(e),
             posterShape: 'landscape',
             description: `${live ? `🔴 Live now · started ${when}` : `⏰ Starts ${when}`}\n${e.sources.join(' · ')} · ${count} channel${count === 1 ? '' : 's'}`,
             genres: e.sources,
