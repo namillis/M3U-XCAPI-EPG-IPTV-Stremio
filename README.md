@@ -205,6 +205,201 @@ The free plan (256 MB storage, 500K commands a month, 10 MB per request) is plen
 
 ---
 
+## 🏗️ Free Self-Hosting on Oracle Cloud
+
+Oracle Cloud's Always Free tier includes an ARM VM that runs this addon around the clock at no cost. It never sleeps, so there are no cold starts and no keep-alive pings. In exchange you run the VM yourself: [Caddy](https://caddyserver.com) provides HTTPS, Redis runs next to the addon, and a small timer redeploys when you push to your fork.
+
+### Create the VM
+
+1. Sign up at [oracle.com/cloud/free](https://www.oracle.com/cloud/free/). A credit card is needed for verification, but Always Free resources aren't billed. Your home region is permanent, and busy regions often run out of ARM capacity.
+2. Go to **Compute** → **Instances** → **Create instance**:
+
+   | Setting | Value |
+   |---------|-------|
+   | Image | Canonical Ubuntu 24.04 |
+   | Shape | `VM.Standard.A1.Flex`, 1 OCPU / 4 GB (enough for this addon and a few more) |
+   | Networking | New VCN with a public subnet, assign a public IPv4 address |
+   | Boot volume | 100 GB (Always Free includes 200 GB in total) |
+   | SSH key | Your public key |
+
+   If you get **Out of host capacity**, try another availability domain or try again later.
+3. Open ports 80 and 443 in two places:
+   - **Networking** → your VCN → your subnet's **Security List** → **Add Ingress Rules**: source `0.0.0.0/0`, TCP, destination port `80`, then the same for `443`.
+   - On the VM itself. Oracle's Ubuntu image ships iptables rules that reject everything except SSH, so insert the new rules above its `REJECT` rule:
+
+     ```bash
+     pos=$(sudo iptables -L INPUT --line-numbers -n | awk '/REJECT/{print $1; exit}')
+     sudo iptables -I INPUT $pos -m state --state NEW -p tcp --dport 443 -j ACCEPT
+     sudo iptables -I INPUT $pos -m state --state NEW -p tcp --dport 80 -j ACCEPT
+     sudo netfilter-persistent save
+     ```
+4. Point a hostname at the VM's public IP. A free [DuckDNS](https://www.duckdns.org) subdomain works. DuckDNS fills in the IP of the network you create it from, so replace it with the VM's IP. The VM's IP only changes if you delete the VM.
+
+### Run the addon
+
+Install Docker and clone your fork:
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker ubuntu   # log out and back in afterwards
+mkdir -p ~/stack/addons && cd ~/stack
+git clone https://github.com/<you>/M3U-XCAPI-EPG-IPTV-Stremio addons/iptv
+```
+
+Create `~/stack/docker-compose.yml`:
+
+```yaml
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+
+  iptv:
+    build: ./addons/iptv
+    restart: unless-stopped
+    env_file: ./iptv.env
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+
+volumes:
+  caddy_data:
+  caddy_config:
+  redis_data:
+```
+
+Create `~/stack/Caddyfile` with your hostname:
+
+```
+yourname.duckdns.org {
+    reverse_proxy iptv:7000
+}
+```
+
+Create `~/stack/iptv.env` and `chmod 600` it:
+
+```
+CONFIG_SECRET=<a long random string, e.g. from openssl rand -hex 32>
+SITE_PASSWORD=<optional>
+CACHE_ENABLED=true
+DEBUG_MODE=false
+REDIS_URL=redis://redis:6379
+EPG_REFRESH_MS=3600000
+```
+
+- Don't set `PORT`. Caddy expects the default `7000`.
+- `EPG_REFRESH_MS=3600000` refreshes the guide hourly instead of every 6 hours. The VM has the memory for it. Leave it out to keep the default.
+- Local Redis has no 10 MB request limit, so you can raise `REDIS_MAX_BYTES` if the guide save is skipped in the logs.
+
+Start everything and check that Caddy gets a certificate:
+
+```bash
+cd ~/stack && docker compose up -d --build
+docker compose logs -f caddy
+```
+
+Then open `https://yourname.duckdns.org/`. Only Caddy publishes ports. The addon and Redis are reachable only on Docker's internal network.
+
+### Auto-deploy from GitHub
+
+The VM checks your fork every 2 minutes and rebuilds the addon when `main` moves. No secrets go into GitHub, and nothing needs to reach the VM over SSH.
+
+Create `~/stack/autodeploy.sh` and `chmod 755` it:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+exec 9>/tmp/stack-autodeploy.lock
+flock -n 9 || exit 0
+
+STACK=/home/ubuntu/stack
+REPO=$STACK/addons/iptv
+
+git -C "$REPO" fetch -q origin main
+LOCAL=$(git -C "$REPO" rev-parse HEAD)
+REMOTE=$(git -C "$REPO" rev-parse origin/main)
+[ "$LOCAL" = "$REMOTE" ] && exit 0
+
+echo "deploying ${LOCAL:0:7} -> ${REMOTE:0:7}"
+git -C "$REPO" merge -q --ff-only origin/main
+cd "$STACK"
+docker compose build -q iptv
+docker compose up -d iptv
+docker image prune -f >/dev/null
+
+for i in $(seq 1 20); do
+  if docker compose exec -T iptv wget -qO- http://localhost:7000/health >/dev/null 2>&1; then
+    echo "healthy at $(git -C "$REPO" log --oneline -1)"
+    exit 0
+  fi
+  sleep 3
+done
+echo "health check failed after deploy" >&2
+exit 1
+```
+
+Install it as a systemd timer:
+
+```bash
+sudo tee /etc/systemd/system/stack-autodeploy.service >/dev/null <<'EOF'
+[Unit]
+Description=Pull and redeploy the IPTV addon when main changes
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/stack/autodeploy.sh
+EOF
+
+sudo tee /etc/systemd/system/stack-autodeploy.timer >/dev/null <<'EOF'
+[Unit]
+Description=Check GitHub for IPTV addon updates every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now stack-autodeploy.timer
+```
+
+Logs are in `journalctl -u stack-autodeploy`. There is no automatic rollback: if a deploy breaks the addon, revert the commit on GitHub and the VM deploys the revert. Make changes through GitHub, not in the VM's checkout, or the fast-forward stops.
+
+### Moving from Render
+
+- Use the same `CONFIG_SECRET` as on Render. Your existing manifest URL then keeps working on the VM once you swap in the new hostname, so you don't have to configure the addon again.
+- Install the addon on the new hostname in Stremio and check that channels, streams and the guide load before you switch your other devices.
+- Point UptimeRobot at the new `/health` if you want down alerts. The VM doesn't need keep-alive pings.
+- Once the VM has worked for a while, suspend the Render service. If you used Upstash for Redis, you can delete that database too.
+
+### Oracle free tier notes
+
+- **Idle reclamation:** Oracle can reclaim an Always Free VM when its CPU (95th percentile), network and memory use all stay under 20% for 7 days. This addon on its own sits around 17-19% memory on a 4 GB VM. Upgrade the account to Pay As You Go (still $0 within Always Free limits) or run more on the VM, and check **Instance** → **Metrics** → **Memory Utilization**.
+- **ARM:** the VM is arm64. Building from source works. Prebuilt images must support `linux/arm64`.
+- **Datacenter IP blocks:** some IPTV providers block cloud IPs, Oracle's included. If your playlist loads at home but not on the VM, that's the likely cause.
+
+---
+
 ## 🔐 Configuration Tokens
 
 | Type | Format | Notes |
