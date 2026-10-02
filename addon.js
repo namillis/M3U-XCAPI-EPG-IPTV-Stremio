@@ -278,6 +278,24 @@ class M3UEPGAddon {
         this.log.debug('Group catalogs built', { matched: ordered.length, added: groupCatalogs.length });
     }
 
+    buildCatchupCatalog(tvCatalog) {
+        const catalogs = this.manifestRef.catalogs;
+        const existing = catalogs.findIndex(c => c.id === 'iptv_catchup');
+        if (existing !== -1) catalogs.splice(existing, 1);
+        const channels = this.channels.filter(c => this.catchupEnabledFor(c));
+        if (!channels.length) return;
+        const groups = [...new Set(channels.map(c => this.channelGroup(c)).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b));
+        catalogs.splice(catalogs.indexOf(tvCatalog) + 1, 0, {
+            type: 'tv',
+            id: 'iptv_catchup',
+            name: 'Catch-up TV',
+            extra: [{ name: 'genre', options: groups }, { name: 'search' }, { name: 'skip' }],
+            genres: groups
+        });
+        this.log.debug('Catch-up catalog built', { channels: channels.length, groups: groups.length });
+    }
+
     buildGenresInManifest() {
         if (!this.manifestRef || !this.manifestReady) return;
         const tvCatalog = this.manifestRef.catalogs.find(c => c.id === 'iptv_channels');
@@ -304,6 +322,7 @@ class M3UEPGAddon {
             if (!groups.includes('All Channels')) groups.unshift('All Channels');
             setGenresOnCatalog(tvCatalog, groups);
             this.buildGroupCatalogs(tvCatalog);
+            this.buildCatchupCatalog(tvCatalog);
         }
 
         if (movieCatalog) {
@@ -982,6 +1001,8 @@ async function createAddon(config) {
                 let items = [];
                 if (args.type === 'tv' && args.id === 'iptv_channels') {
                     items = addonInstance.channels;
+                } else if (args.type === 'tv' && args.id === 'iptv_catchup') {
+                    items = addonInstance.channels.filter(c => addonInstance.catchupEnabledFor(c));
                 } else if (args.type === 'tv' && args.id.startsWith('iptv_grp_')) {
                     const group = addonInstance.groupCatalogMap?.get(args.id);
                     if (group) items = addonInstance.channels.filter(c => addonInstance.channelGroup(c) === group);
