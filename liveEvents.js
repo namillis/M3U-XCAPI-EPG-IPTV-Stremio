@@ -209,6 +209,8 @@ function looksLikeGame(title) {
 const MERGE_WINDOW_MS = 45 * 60000;
 const GUIDE_BEFORE_MS = 10 * 60000;
 const GUIDE_AHEAD_MS = 70 * 60000;
+const MIN_GAME_SECONDS = 50 * 60;
+const MIN_MATCHUP_SECONDS = 25 * 60;
 
 function cleanSide(s) {
     return s.replace(/\s*\((?:week|wk|round|rd|game|match|md)[^)]*\)\s*$/i, '').trim();
@@ -298,6 +300,7 @@ function guideEvent(p, channelLabel, now = Date.now()) {
     if (!p.l && REPLAY_DESC.test(p.d || '')) return null;
     const matchup = matchupOf(p.st) || matchupOf(title) || matchupOf(p.d);
     if (!matchup && !p.l && !looksLikeGame(title)) return null;
+    if (!p.l && p.e - p.s < (matchup ? MIN_MATCHUP_SECONDS : MIN_GAME_SECONDS)) return null;
     const fromTitle = matchup && title.includes(matchup.teams[0]) && title.includes(matchup.teams[1]);
     const league = fromTitle
         ? title.split(/\s[-–—]\s/).filter(s => !s.includes(matchup.teams[0])).join(' – ') || null
