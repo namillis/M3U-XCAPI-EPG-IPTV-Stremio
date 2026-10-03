@@ -1,8 +1,10 @@
 const fetch = require('node-fetch');
 
-// [path, label, tier]. The tier is the league's base importance for sorting Live Now.
+// [path, label, tier, extra query]. The tier is the league's base importance for sorting Live Now.
 const LEAGUES = [
     ['football/college-football', 'College Football', 40],
+    // The default college football scoreboard only lists FBS games; group 81 is FCS.
+    ['football/college-football', 'College Football', 10, 'groups=81'],
     ['football/nfl', 'NFL', 60],
     ['basketball/nba', 'NBA', 40],
     ['basketball/wnba', 'WNBA', 30],
@@ -183,11 +185,12 @@ async function refresh(now) {
     const dates = [etDate(now)];
     if (parseInt(hourFmt.format(new Date(now)), 10) < EARLY_HOURS) dates.unshift(etDate(now - 86400000));
     const jobs = [];
-    for (const [path, sport, tier] of LEAGUES) {
-        for (const d of dates) jobs.push({ url: `${BASE_URL}${path}/scoreboard?dates=${d}&limit=500`, sport, tier });
+    for (const [path, sport, tier, query] of LEAGUES) {
+        for (const d of dates) jobs.push({ url: `${BASE_URL}${path}/scoreboard?dates=${d}&limit=500${query ? '&' + query : ''}`, sport, tier });
     }
     const featured = featuredIds();
     const games = [];
+    const seen = new Set();
     let loaded = 0;
     for (let i = 0; i < jobs.length; i += CONCURRENCY) {
         const batch = await Promise.allSettled(
@@ -196,7 +199,11 @@ async function refresh(now) {
         for (const r of batch) {
             if (r.status !== 'fulfilled') continue;
             loaded++;
-            games.push(...r.value);
+            for (const g of r.value) {
+                if (g.id && seen.has(g.id)) continue;
+                if (g.id) seen.add(g.id);
+                games.push(g);
+            }
         }
     }
     if (!loaded) throw new Error('no scoreboards loaded');

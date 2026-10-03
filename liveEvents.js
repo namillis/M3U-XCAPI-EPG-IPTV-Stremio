@@ -324,6 +324,30 @@ function findGame(e, games) {
     return best ? best.g : null;
 }
 
+// Polymarket sides are [full name, name, alias]. College names are mascots ("Warhawks"), so one side may match
+// on any of its names as long as the other matches on the full name.
+function sidesMatch(a, b) {
+    const full = (x, y) => x.some(n => teamMatches(n, [y[0]]));
+    const any = (x, y) => x.some(n => teamMatches(n, y));
+    const pair = (x0, y0, x1, y1) => (full(x0, y0) && any(x1, y1)) || (any(x0, y0) && full(x1, y1));
+    return pair(a[0], b[0], a[1], b[1]) || pair(a[0], b[1], a[1], b[0]);
+}
+
+function applyLiveActivity(index, games) {
+    for (const e of index.values()) {
+        delete e.liveBoost;
+        if (!e.teams || !games || !games.length) continue;
+        const sides = e.gameTeams || e.teams.map(t => [t]);
+        let best = null;
+        for (const g of games) {
+            const d = Math.abs(g.start - e.start);
+            if (d > SCHEDULE_WINDOW_MS || !sidesMatch(sides, g.teams)) continue;
+            if (!best || d < best.d) best = { g, d };
+        }
+        if (best && best.g.boost) e.liveBoost = best.g.boost;
+    }
+}
+
 function annotateWithSchedule(byKey, games, now) {
     if (!games || !games.length) return;
     for (const e of byKey.values()) {
@@ -564,6 +588,7 @@ function addLinks(target, links) {
 }
 
 function applyGame(e, g, now) {
+    e.game = g;
     e.sport = g.sport;
     e.importance = g.importance;
     e.status = g.state;
@@ -707,7 +732,10 @@ function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category
     if (epgData) addGuideEvents(byKey, [...byKey.values()], epgData, channelsByEpgId, groupOf, now);
     annotateWithSchedule(byKey, schedule, now);
     if (schedule && schedule.length) addScheduleNetworks(byKey, schedule, channels, groupOf, now);
-    for (const e of byKey.values()) delete e.game;
+    for (const e of byKey.values()) {
+        if (e.game) e.gameTeams = e.game.teams;
+        delete e.game;
+    }
     const byId = new Map();
     for (const e of byKey.values()) byId.set(e.id, e);
     return byId;
@@ -781,6 +809,10 @@ function importanceOf(e) {
     return score;
 }
 
+function liveRank(e) {
+    return importanceOf(e) + (e.liveBoost || 0);
+}
+
 function matchesGenre(e, genre, includeAssumed) {
     if (!genre) return !e.assumedDay || includeAssumed;
     if (SPORT_CATEGORIES.includes(genre)) return categoryOf(e) === genre && (!e.assumedDay || includeAssumed);
@@ -804,7 +836,7 @@ function currentEvents(index, now = Date.now(), { genre = null, source = null, i
         if (s === 'live') live.push(e);
         else if (s === 'soon') soon.push(e);
     }
-    live.sort((a, b) => importanceOf(b) - importanceOf(a) || b.start - a.start || a.title.localeCompare(b.title));
+    live.sort((a, b) => liveRank(b) - liveRank(a) || b.start - a.start || a.title.localeCompare(b.title));
     soon.sort((a, b) => a.start - b.start || importanceOf(b) - importanceOf(a) || a.title.localeCompare(b.title));
     return [...live, ...soon];
 }
@@ -820,4 +852,4 @@ function todayEvents(index, now = Date.now(), { genre = null, includeAssumed = f
     return out.sort((a, b) => a.start - b.start || a.title.localeCompare(b.title));
 }
 
-module.exports = { parseEventSlot, buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, cardTitleFor, findGame, categoryOf, importanceOf, titleCase, sourceLabel, SPORT_CATEGORIES };
+module.exports = { parseEventSlot, buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, cardTitleFor, findGame, applyLiveActivity, categoryOf, importanceOf, titleCase, sourceLabel, SPORT_CATEGORIES };
