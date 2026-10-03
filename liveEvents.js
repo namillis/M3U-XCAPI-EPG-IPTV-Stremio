@@ -197,14 +197,35 @@ function eventKey(title, start) {
     return `${t}|${Math.round(start / 300000)}`;
 }
 
+// Conference streams can lead with their network, as in "SEC Network+ #11 Tennessee @ #7 Florida".
+const NETWORK_PREFIXES = [
+    [/^(?:SEC\s*Network\s*\+|SECN\s*\+)\s+/i, 'SEC Network+'],
+    [/^ACC\s*(?:NX|Network Extra)\s+/i, 'ACCNX'],
+    [/^(?:Big Ten|B1G)\s*\+\s+/i, 'B1G+'],
+    [/^ESPN\s*\+\s+/i, 'ESPN+'],
+    [/^ESPNU\s+/i, 'ESPNU']
+];
+
+function splitNetworkPrefix(title) {
+    for (const [re, network] of NETWORK_PREFIXES) {
+        const m = title.match(re);
+        if (m && title.length > m[0].length) return { network, title: title.slice(m[0].length) };
+    }
+    return { network: null, title };
+}
+
 const SPORT_CATEGORY = /sport|football|soccer|f[uú]tbol|basketball|baseball|hockey|tennis|golf|cricket|rugby|boxing|mma|martial|wrestling|motor|racing|cycling|athletics|volleyball|darts|snooker|lacrosse|softball|deportes/i;
 const SPORT_CHANNEL = /sport|espn|\bfs[12]\b|fox soccer|\btnt\b|\btbs\b|nbc ?sports|cbs ?sports|bein|dazn|eurosport|\bnfl\b|nhl network|mlb network|nba tv|big ?ten|\bbtn\b|sec network|acc network|golf|tennis|setanta|\btsn\b|sportsnet|willow|supersport|premier sports|bt ?sport|fight|\bufc\b|racing|\bmsg\b|nesn|marquee|altitude|monumental|root sports|fubo|trutv/i;
 const SPORT_TITLE = /\b(football|soccer|f[uú]tbol|basketball|baseball|hockey|tennis|golf|cricket|rugby|boxing|mma|ufc|wrestling|volleyball|lacrosse|softball|darts|snooker|cycling|nascar|indycar|motogp|formula 1|f1|grand prix|nfl|nba|wnba|mlb|nhl|mls|ncaa|premier league|la ?liga|serie a|bundesliga|ligue 1|champions league|europa league|nations league|world cup)\b/i;
 const NOT_LIVE_TITLE = /\b(highlights?|hl|magazine|show|preview|review|countdown|tonight|today|center|centre|report|update|news|talk|daily|plays of the week|inside|recap|rewind|classics?|best of|replay|encore|pre-?game|post-?game|kickoff|studio|analysis|podcast|documentary|30 for 30|debrief|upcoming)\b|\blive\s*$/i;
 const REPLAY_DESC = /\b(relive|highlights|best of|looks? back|replay|rewind|classic|revisit|from earlier|from last)\b/i;
-const SIDE = "([\\p{Lu}\\p{N}][\\p{L}\\p{N}.'’&/ -]{0,40}?)";
-const VERSUS_RE = new RegExp(`^\\s*(?:[Tt]he\\s+)?${SIDE}\\s+([Vv][Ss]\\.?|[Vv]\\.?|[Aa][Tt]|@)\\s+(?:[Tt]he\\s+)?${SIDE}\\s*(?:[.,:;(]|\\s[-–]\\s|$)`, 'u');
-const RANK = '(?:no\\.?\\s?\\d+\\s+|#\\d+\\s+)?';
+// A team name, optionally followed by a two-letter state tag as in "Maryville (Mo)".
+const SIDE = "([\\p{Lu}\\p{N}][\\p{L}\\p{N}.'’&/ -]{0,40}?(?:\\s\\(\\p{Lu}\\p{L}\\.?\\))?)";
+// A ranking in front of a team ("#24 Colorado", "No. 3 Kentucky"). It is matched but kept out of the team name.
+const RANK = '(?:[Nn][Oo]\\.?\\s?\\d+\\s+|#\\d+\\s+)?';
+// A period ends the matchup, except in abbreviations like "St. Bonaventure".
+const SIDE_END = '\\s*(?:(?<!\\b(?:St|Mt|Ft))\\.|[,:;(]|\\s[-–]\\s|$)';
+const VERSUS_RE = new RegExp(`^\\s*(?:[Tt]he\\s+)?${RANK}${SIDE}\\s+([Vv][Ss]\\.?|[Vv]\\.?|[Aa][Tt]|@)\\s+(?:[Tt]he\\s+)?${RANK}${SIDE}${SIDE_END}`, 'u');
 const HOST_RE = new RegExp(`^\\s*(?:the\\s+)?${RANK}${SIDE}\\s+(host|visit|welcome|face|meet|take on)s?\\s+(?:the\\s+)?${RANK}${SIDE}\\s*(?:[.,;(]|\\s(?:at|in|on|for|from)\\s)`, 'iu');
 const MAX_SIDE_WORDS = 5;
 const SPORT_NOUN = '(?:football|soccer|basketball|baseball|hockey|tennis|golf|cricket|rugby|volleyball|softball|lacrosse|darts|snooker|wrestling|boxing|racing|cycling|swimming|athletics|gymnastics|bowling|handball|futsal|motocross|supercross)';
@@ -662,7 +683,7 @@ function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category
         const key = eventKey(ev.title, ev.start);
         let entry = byKey.get(key);
         if (!entry) {
-            const title = titleCase(ev.title.replace(NOISE_PARENS, '').trim());
+            const { network, title } = splitNetworkPrefix(titleCase(ev.title.replace(NOISE_PARENS, '').trim()));
             entry = {
                 id: 'iptv_ev_' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 16),
                 title,
@@ -673,6 +694,7 @@ function buildEventIndex(channels, { now = Date.now(), groupOf = c => c.category
                 sources: [],
                 channels: []
             };
+            if (network) entry.network = network;
             byKey.set(key, entry);
         }
         if (ev.day !== 'assumed') entry.assumedDay = false;
@@ -710,7 +732,7 @@ const CATEGORY_RULES = [
     ['Lacrosse', /lacrosse/i],
     ['Tennis', /tennis|\batp\b|\bwta\b|padel/i],
     ['Golf', /\bgolf\b|\bpga\b|\blpga\b|liv golf/i],
-    ['Motorsport', /formula (?:1|2|3|e)|\bf1\b|motogp|moto2|moto3|nascar|indycar|\bimsa\b|grand prix|rally|\bwrc\b|supercars|motocross|supercross|\bracing\b|\bbmx\b/i],
+    ['Motorsport', /formula (?:1|2|3|e)|\bf1\b|motogp|moto2|moto3|nascar|indycar|\bimsa\b|grand prix|rally|\bwrc\b|supercars|motocross|supercross|\bracing\b|\bbmx\b|sprint cars?|world of outlaws|\barca\b|off[- ]?road|late models?|speedway/i],
     ['Fighting', /\bufc\b|\bmma\b|boxing|bare knuckle|\bbkfc\b|\bpfl\b|\bfights?\b|fight night|bellator|kickboxing|muay thai|\bbjj\b/i],
     ['Wrestling', /wrestling|\baew\b|\bwwe\b/i],
     ['Rugby', /rugby/i],
@@ -720,11 +742,14 @@ const CATEGORY_RULES = [
     ['Cycling', /cycling|\buci\b|tour de /i]
 ];
 
+const FC_SIDE = /(?:^|\s)fc$|^fc\s/i;
+
 function categoryOf(e) {
     if (e.category !== undefined) return e.category;
     const text = [e.sport, e.league, e.programme, e.title, ...(e.sources || [])].filter(Boolean).join(' | ');
     const hit = CATEGORY_RULES.find(([, re]) => re.test(text));
-    e.category = hit ? hit[0] : null;
+    if (hit) e.category = hit[0];
+    else e.category = matchupOf(e.title)?.teams.some(t => FC_SIDE.test(t)) ? 'Soccer' : null;
     return e.category;
 }
 
