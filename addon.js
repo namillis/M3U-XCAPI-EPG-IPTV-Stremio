@@ -6,9 +6,10 @@ const { addonBuilder } = require("stremio-addon-sdk");
 const crypto = require("crypto");
 const LRUCache = require("./lruCache");
 const { parseXmltvStream } = require("./epgParser");
-const { buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, cardTitleFor, categoryOf, SPORT_CATEGORIES } = require("./liveEvents");
+const { buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, cardTitleFor, categoryOf, applyLiveActivity, SPORT_CATEGORIES } = require("./liveEvents");
 const eventCards = require("./eventCard");
 const { getSchedule } = require("./espnSchedule");
+const { getLiveActivity } = require("./polymarketLive");
 const { version: ADDON_VERSION } = require("./package.json");
 const fetch = require('node-fetch');
 const zlib = require('zlib');
@@ -396,6 +397,7 @@ class M3UEPGAddon {
     liveEventIndex() {
         const now = Date.now();
         const schedule = getSchedule(now);
+        const activity = getLiveActivity(now);
         if (!this.eventIndex || this.eventIndexFor !== this.channels || this.eventIndexEpg !== this.epgData ||
             this.eventIndexSchedule !== schedule.version || now - this.eventIndexAt > EVENT_INDEX_TTL_MS) {
             this.eventIndex = buildEventIndex(this.channels, {
@@ -409,6 +411,11 @@ class M3UEPGAddon {
             this.eventIndexEpg = this.epgData;
             this.eventIndexSchedule = schedule.version;
             this.eventIndexAt = now;
+            this.eventIndexActivity = null;
+        }
+        if (this.eventIndexActivity !== activity.version) {
+            applyLiveActivity(this.eventIndex, activity.games);
+            this.eventIndexActivity = activity.version;
         }
         return this.eventIndex;
     }
