@@ -4,6 +4,9 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
+# fontconfig gives sharp's text rendering a font configuration for the bundled card fonts
+RUN apk add --no-cache fontconfig
+
 # Copy package files and install dependencies
 COPY package.json package-lock.json ./
 RUN npm install --production

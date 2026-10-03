@@ -174,16 +174,20 @@ function brightness(hex) {
     return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
 }
 
+function cardTitleFor(e) {
+    let title = e.network ? e.title.replace(` · ${e.network}`, '') : e.title;
+    const tag = title.match(/\s*\(([^)]+)\)\s*$/);
+    if (tag && e.sport && e.sport.toLowerCase().includes(tag[1].toLowerCase())) title = title.slice(0, tag.index);
+    return title;
+}
+
 function eventCardUrl(e) {
     const source = e.sources[0] || '';
     const teamColor = [e.color, e.altColor].find(c => typeof c === 'string' && /^[0-9a-f]{6}$/i.test(c));
     const color = teamColor || CARD_COLORS[parseInt(crypto.createHash('md5').update(source).digest('hex').slice(0, 6), 16) % CARD_COLORS.length];
     const textColor = brightness(color) > 0.6 ? '111111' : 'FFFFFF';
     const footer = e.sport || e.network || source;
-    let title = e.network ? e.title.replace(` · ${e.network}`, '') : e.title;
-    const tag = title.match(/\s*\(([^)]+)\)\s*$/);
-    if (tag && e.sport && e.sport.toLowerCase().includes(tag[1].toLowerCase())) title = title.slice(0, tag.index);
-    let text = cardText(title);
+    let text = cardText(cardTitleFor(e));
     if (footer && text.length + 2 + footer.length <= CARD_TEXT_MAX) text += `\\n${footer}`;
     return `https://placehold.co/640x360/${color}/${textColor}/png?font=oswald&text=${encodeURIComponent(text)}`;
 }
@@ -763,4 +767,4 @@ function todayEvents(index, now = Date.now(), { genre = null, includeAssumed = f
     return out.sort((a, b) => a.start - b.start || a.title.localeCompare(b.title));
 }
 
-module.exports = { parseEventSlot, buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, findGame, categoryOf, titleCase, sourceLabel, SPORT_CATEGORIES };
+module.exports = { parseEventSlot, buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, cardTitleFor, findGame, categoryOf, titleCase, sourceLabel, SPORT_CATEGORIES };
