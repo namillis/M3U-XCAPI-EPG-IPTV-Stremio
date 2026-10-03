@@ -332,6 +332,7 @@ function annotateWithSchedule(byKey, games, now) {
         if (!g) continue;
         e.sport = g.sport;
         e.game = g;
+        e.importance = g.importance;
         e.color = g.color;
         e.altColor = g.altColor;
         e.status = g.state;
@@ -564,6 +565,7 @@ function addLinks(target, links) {
 
 function applyGame(e, g, now) {
     e.sport = g.sport;
+    e.importance = g.importance;
     e.status = g.state;
     e.statusDetail = g.detail;
     e.color = g.color;
@@ -732,12 +734,12 @@ const CATEGORY_RULES = [
     ['Lacrosse', /lacrosse/i],
     ['Tennis', /tennis|\batp\b|\bwta\b|padel/i],
     ['Golf', /\bgolf\b|\bpga\b|\blpga\b|liv golf/i],
+    ['Darts', /darts/i],
     ['Motorsport', /formula (?:1|2|3|e)|\bf1\b|motogp|moto2|moto3|nascar|indycar|\bimsa\b|grand prix|rally|\bwrc\b|supercars|motocross|supercross|\bracing\b|\bbmx\b|sprint cars?|world of outlaws|\barca\b|off[- ]?road|late models?|speedway/i],
     ['Fighting', /\bufc\b|\bmma\b|boxing|bare knuckle|\bbkfc\b|\bpfl\b|\bfights?\b|fight night|bellator|kickboxing|muay thai|\bbjj\b/i],
     ['Wrestling', /wrestling|\baew\b|\bwwe\b/i],
     ['Rugby', /rugby/i],
     ['Cricket', /cricket|\bodi\b|\bt20\b/i],
-    ['Darts', /darts/i],
     ['Snooker', /snooker/i],
     ['Cycling', /cycling|\buci\b|tour de /i]
 ];
@@ -751,6 +753,32 @@ function categoryOf(e) {
     if (hit) e.category = hit[0];
     else e.category = matchupOf(e.title)?.teams.some(t => FC_SIDE.test(t)) ? 'Soccer' : null;
     return e.category;
+}
+
+// Events ESPN doesn't list are scored from their sport, network and channel group, below most ESPN games.
+const CATEGORY_IMPORTANCE = {
+    Football: 15, Fighting: 15, Basketball: 12, Baseball: 12, Motorsport: 12, Hockey: 10, Soccer: 10,
+    Golf: 8, Tennis: 8, Rugby: 8, Cricket: 8, Darts: 5, Wrestling: 5, Snooker: 4, Cycling: 4,
+    'Horse Racing': 4, Lacrosse: 3, Volleyball: 3, 'Field Hockey': 2
+};
+const MAJOR_NETWORK_RE = /^(?:ABC|CBS|NBC|FOX|ESPN2?|TNT|TBS|TRU ?TV|FS1|USA)(?:\s|$)|^sky sports main event$|^tnt sports 1$/i;
+const PPV_SOURCE_RE = /^(?!.*\bMAX\b).*\bPPV\b/i;
+const NFL_SOURCE_RE = /^NFL$/i;
+const LOW_SOURCE_RE = /^FLO\b/i;
+const HEADLINE_EVENT_RE = /\bUFC \d{3}\b|\bformula (?:1|one)\b|\bF1\b(?! academy)/i;
+const STUDIO_TITLE_RE = /\b(?:scoreboard|halftime|huddle|band performances?|warm-?ups?|highlights?|countdown|pre-?game|post-?game|studio|press conference|weigh-?ins?)\b|\b(?:live|today|tonight|center|centre)\s*$/i;
+
+function importanceOf(e) {
+    if (e.importance !== undefined) return e.importance;
+    let score = CATEGORY_IMPORTANCE[categoryOf(e)] || 0;
+    if (e.network && MAJOR_NETWORK_RE.test(e.network)) score += 8;
+    if (e.sources.some(s => PPV_SOURCE_RE.test(s))) score += 15;
+    if (e.sources.some(s => NFL_SOURCE_RE.test(s))) score += 20;
+    if (HEADLINE_EVENT_RE.test(e.title)) score += 20;
+    if (e.sources.length && e.sources.every(s => LOW_SOURCE_RE.test(s))) score -= 10;
+    if (STUDIO_TITLE_RE.test(e.programme || e.title)) score -= 20;
+    e.importance = score;
+    return score;
 }
 
 function matchesGenre(e, genre, includeAssumed) {
@@ -776,8 +804,8 @@ function currentEvents(index, now = Date.now(), { genre = null, source = null, i
         if (s === 'live') live.push(e);
         else if (s === 'soon') soon.push(e);
     }
-    live.sort((a, b) => b.start - a.start || a.title.localeCompare(b.title));
-    soon.sort((a, b) => a.start - b.start || a.title.localeCompare(b.title));
+    live.sort((a, b) => importanceOf(b) - importanceOf(a) || b.start - a.start || a.title.localeCompare(b.title));
+    soon.sort((a, b) => a.start - b.start || importanceOf(b) - importanceOf(a) || a.title.localeCompare(b.title));
     return [...live, ...soon];
 }
 
@@ -792,4 +820,4 @@ function todayEvents(index, now = Date.now(), { genre = null, includeAssumed = f
     return out.sort((a, b) => a.start - b.start || a.title.localeCompare(b.title));
 }
 
-module.exports = { parseEventSlot, buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, cardTitleFor, findGame, categoryOf, titleCase, sourceLabel, SPORT_CATEGORIES };
+module.exports = { parseEventSlot, buildEventIndex, currentEvents, todayEvents, eventState, eventCardUrl, cardTitleFor, findGame, categoryOf, importanceOf, titleCase, sourceLabel, SPORT_CATEGORIES };

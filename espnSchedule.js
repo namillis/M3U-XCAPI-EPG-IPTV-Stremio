@@ -1,39 +1,57 @@
 const fetch = require('node-fetch');
 
+// [path, label, tier]. The tier is the league's base importance for sorting Live Now.
 const LEAGUES = [
-    ['football/college-football', 'College Football'],
-    ['football/nfl', 'NFL'],
-    ['basketball/nba', 'NBA'],
-    ['basketball/wnba', 'WNBA'],
-    ['basketball/mens-college-basketball', "Men's College Basketball"],
-    ['basketball/womens-college-basketball', "Women's College Basketball"],
-    ['baseball/mlb', 'MLB'],
-    ['baseball/college-baseball', 'College Baseball'],
-    ['hockey/nhl', 'NHL'],
-    ['hockey/mens-college-hockey', "Men's College Hockey"],
-    ['hockey/womens-college-hockey', "Women's College Hockey"],
-    ['soccer/usa.1', 'MLS'],
-    ['soccer/usa.nwsl', 'NWSL'],
-    ['soccer/usa.ncaa.m.1', "Men's College Soccer"],
-    ['soccer/usa.ncaa.w.1', "Women's College Soccer"],
-    ['soccer/eng.1', 'Premier League'],
-    ['soccer/eng.2', 'EFL Championship'],
-    ['soccer/esp.1', 'LaLiga'],
-    ['soccer/esp.2', 'LaLiga 2'],
-    ['soccer/ita.1', 'Serie A'],
-    ['soccer/ger.1', 'Bundesliga'],
-    ['soccer/fra.1', 'Ligue 1'],
-    ['soccer/uefa.champions', 'Champions League'],
-    ['soccer/uefa.europa', 'Europa League'],
-    ['soccer/uefa.nations', 'UEFA Nations League'],
-    ['soccer/concacaf.nations.league', 'CONCACAF Nations League'],
-    ['soccer/mex.1', 'Liga MX'],
-    ['volleyball/womens-college-volleyball', "Women's College Volleyball"],
-    ['field-hockey/womens-college-field-hockey', 'College Field Hockey'],
-    ['lacrosse/mens-college-lacrosse', "Men's College Lacrosse"],
-    ['lacrosse/womens-college-lacrosse', "Women's College Lacrosse"]
+    ['football/college-football', 'College Football', 40],
+    ['football/nfl', 'NFL', 60],
+    ['basketball/nba', 'NBA', 40],
+    ['basketball/wnba', 'WNBA', 30],
+    ['basketball/mens-college-basketball', "Men's College Basketball", 30],
+    ['basketball/womens-college-basketball', "Women's College Basketball", 15],
+    ['baseball/mlb', 'MLB', 30],
+    ['baseball/college-baseball', 'College Baseball', 5],
+    ['hockey/nhl', 'NHL', 30],
+    ['hockey/mens-college-hockey', "Men's College Hockey", 8],
+    ['hockey/womens-college-hockey', "Women's College Hockey", 4],
+    ['soccer/usa.1', 'MLS', 15],
+    ['soccer/usa.nwsl', 'NWSL', 10],
+    ['soccer/usa.ncaa.m.1', "Men's College Soccer", 3],
+    ['soccer/usa.ncaa.w.1', "Women's College Soccer", 3],
+    ['soccer/eng.1', 'Premier League', 30],
+    ['soccer/eng.2', 'EFL Championship', 10],
+    ['soccer/esp.1', 'LaLiga', 25],
+    ['soccer/esp.2', 'LaLiga 2', 5],
+    ['soccer/ita.1', 'Serie A', 20],
+    ['soccer/ger.1', 'Bundesliga', 20],
+    ['soccer/fra.1', 'Ligue 1', 15],
+    ['soccer/uefa.champions', 'Champions League', 35],
+    ['soccer/uefa.europa', 'Europa League', 20],
+    ['soccer/uefa.nations', 'UEFA Nations League', 25],
+    ['soccer/concacaf.nations.league', 'CONCACAF Nations League', 20],
+    ['soccer/mex.1', 'Liga MX', 15],
+    ['volleyball/womens-college-volleyball', "Women's College Volleyball", 5],
+    ['field-hockey/womens-college-field-hockey', 'College Field Hockey', 2],
+    ['lacrosse/mens-college-lacrosse', "Men's College Lacrosse", 8],
+    ['lacrosse/womens-college-lacrosse', "Women's College Lacrosse", 4]
 ];
 const BASE_URL = 'https://site.api.espn.com/apis/site/v2/sports/';
+const FEATURED_URL = 'https://site.web.api.espn.com/apis/personalized/v2/scoreboard/header?region=us&lang=en&contentorigin=espn';
+const BROADCAST_TV = new Set(['ABC', 'CBS', 'NBC', 'FOX']);
+const MAJOR_TV = new Set(['ESPN', 'ESPN2', 'TNT', 'TBS', 'TRUTV', 'FS1', 'USA NET', 'PRIME VIDEO', 'NETFLIX']);
+const NETWORK_POINTS = { broadcast: 20, major: 12, tv: 6 };
+const POSTSEASON_RE = /post-?season|playoff|knockout|round-of|final/i;
+const PRESEASON_RE = /pre-?season/i;
+const POSTSEASON_BONUS = 40;
+const PRESEASON_PENALTY = 25;
+const RANKED_MAX = 25;
+const RANK_WEIGHT = 0.6;
+const BOTH_RANKED_BONUS = 10;
+const RANK_FULL_TIER = 30;
+const FEATURED_BONUS = 8;
+const TICKET_FLOOR = 25;
+const TICKET_WEIGHT = 3;
+const TICKET_MAX = 8;
+const TICKET_MEMO_MS = 36 * 3600000;
 const REFRESH_MS = 15 * 60000;
 const RETRY_MS = 2 * 60000;
 const TIMEOUT_MS = 8000;
@@ -41,6 +59,8 @@ const CONCURRENCY = 6;
 const EARLY_HOURS = 6;
 
 const state = { games: [], version: 0, at: 0, failedAt: 0, loading: null };
+// ESPN stops listing ticket prices once a game starts, so the last price seen is kept per game.
+const ticketMemo = new Map();
 
 const dateFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
 const hourFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' });
@@ -53,7 +73,51 @@ function teamNames(team) {
     return [team.location, team.displayName, team.shortDisplayName, team.abbreviation].filter(Boolean);
 }
 
-function parseScoreboard(json, sport) {
+function rankOf(competitor) {
+    const r = competitor.curatedRank?.current;
+    return Number.isInteger(r) && r >= 1 && r <= RANKED_MAX ? r : null;
+}
+
+function ticketPrice(comp) {
+    const m = String(comp.tickets?.[0]?.summary || '').match(/\$\s*([\d,]+(?:\.\d+)?)/);
+    return m ? parseFloat(m[1].replace(/,/g, '')) : null;
+}
+
+function networkPoints(comp) {
+    const national = (comp.geoBroadcasts || [])
+        .filter(g => g.market?.type === 'National' && g.type?.shortName !== 'Radio' && g.media?.shortName)
+        .map(g => ({ name: g.media.shortName.toUpperCase(), tv: g.type?.shortName === 'TV' }));
+    if (!national.length) {
+        for (const b of comp.broadcasts || []) {
+            if (b.market === 'national') for (const n of b.names || []) national.push({ name: String(n).toUpperCase(), tv: true });
+        }
+    }
+    let best = 0;
+    for (const { name, tv } of national) {
+        const pts = BROADCAST_TV.has(name) ? NETWORK_POINTS.broadcast
+            : MAJOR_TV.has(name) ? NETWORK_POINTS.major
+                : tv ? NETWORK_POINTS.tv : 0;
+        best = Math.max(best, pts);
+    }
+    return best;
+}
+
+function baseImportance(tier, seasonSlug, ranks, netPts) {
+    let score = tier + netPts;
+    if (POSTSEASON_RE.test(seasonSlug)) score += POSTSEASON_BONUS;
+    else if (PRESEASON_RE.test(seasonSlug)) score -= PRESEASON_PENALTY;
+    const ranked = ranks.filter(Boolean);
+    let rankPts = ranked.reduce((sum, r) => sum + (RANKED_MAX + 1 - r) * RANK_WEIGHT, 0);
+    if (ranked.length === 2) rankPts += BOTH_RANKED_BONUS;
+    return score + rankPts * Math.min(1, tier / RANK_FULL_TIER);
+}
+
+function ticketPoints(price) {
+    if (!price || price <= TICKET_FLOOR) return 0;
+    return Math.min(TICKET_MAX, TICKET_WEIGHT * Math.log2(price / TICKET_FLOOR));
+}
+
+function parseScoreboard(json, sport, tier = 0) {
     const games = [];
     for (const ev of json?.events || []) {
         const comp = ev.competitions?.[0];
@@ -69,7 +133,10 @@ function parseScoreboard(json, sport) {
         ].filter(Boolean))];
         const type = ev.status?.type || {};
         games.push({
+            id: ev.id ? String(ev.id) : null,
             sport,
+            importance: baseImportance(tier, ev.season?.slug || '', [rankOf(away), rankOf(home)], networkPoints(comp)),
+            ticket: ticketPrice(comp),
             start,
             teams: [teamNames(away.team), teamNames(home.team)],
             label: `${away.team.displayName || away.team.location} @ ${home.team.displayName || home.team.location}`,
@@ -89,18 +156,42 @@ async function fetchJson(url) {
     return res.json();
 }
 
+async function featuredIds() {
+    try {
+        const json = await fetchJson(FEATURED_URL);
+        const ids = new Set();
+        for (const s of json?.sports || []) for (const l of s.leagues || []) for (const ev of l.events || []) if (ev.id) ids.add(String(ev.id));
+        return ids;
+    } catch (e) {
+        console.warn('[ESPN] Featured list failed:', e.message);
+        return new Set();
+    }
+}
+
+function scoreGames(games, featured, now) {
+    for (const [id, memo] of ticketMemo) if (now - memo.at > TICKET_MEMO_MS) ticketMemo.delete(id);
+    for (const g of games) {
+        if (g.id && g.ticket) ticketMemo.set(g.id, { price: g.ticket, at: now });
+        const price = g.ticket || (g.id && ticketMemo.get(g.id)?.price) || null;
+        g.importance += ticketPoints(price) + (g.id && featured.has(g.id) ? FEATURED_BONUS : 0);
+        g.importance = Math.round(g.importance * 10) / 10;
+    }
+    return games;
+}
+
 async function refresh(now) {
     const dates = [etDate(now)];
     if (parseInt(hourFmt.format(new Date(now)), 10) < EARLY_HOURS) dates.unshift(etDate(now - 86400000));
     const jobs = [];
-    for (const [path, sport] of LEAGUES) {
-        for (const d of dates) jobs.push({ url: `${BASE_URL}${path}/scoreboard?dates=${d}&limit=500`, sport });
+    for (const [path, sport, tier] of LEAGUES) {
+        for (const d of dates) jobs.push({ url: `${BASE_URL}${path}/scoreboard?dates=${d}&limit=500`, sport, tier });
     }
+    const featured = featuredIds();
     const games = [];
     let loaded = 0;
     for (let i = 0; i < jobs.length; i += CONCURRENCY) {
         const batch = await Promise.allSettled(
-            jobs.slice(i, i + CONCURRENCY).map(j => fetchJson(j.url).then(json => parseScoreboard(json, j.sport)))
+            jobs.slice(i, i + CONCURRENCY).map(j => fetchJson(j.url).then(json => parseScoreboard(json, j.sport, j.tier)))
         );
         for (const r of batch) {
             if (r.status !== 'fulfilled') continue;
@@ -109,7 +200,7 @@ async function refresh(now) {
         }
     }
     if (!loaded) throw new Error('no scoreboards loaded');
-    return games;
+    return scoreGames(games, await featured, now);
 }
 
 function getSchedule(now = Date.now()) {
